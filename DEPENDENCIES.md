@@ -276,6 +276,9 @@ Hammerspoon по умолчанию ищет `~/.hammerspoon/init.lua`, тогд
 - `helper/mach.c`, `helper/mach.h`: локальный Mach IPC-код; дополнительных
   загрузок при сборке нет.
 - `helper/Makefile`: собирает helper системными `make` и `clang`.
+  Компилятор и SDK выбираются вместе через `xcrun --sdk macosx --toolchain default`,
+  чтобы не смешивать Xcode/CLT или инструменты из PATH. Тот же вызов компилятора
+  передаётся upstream AeroSpace Swipe как аргумент `CC` команды make.
 - `helper/sketchybar_metrics`: исходный сгенерированный arm64 Mach-O, который
   нельзя переносить на Intel Mac. Исключён из Git и пересобирается локально
   с `make -B` при установке пакета.

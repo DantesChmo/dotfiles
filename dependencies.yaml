@@ -80,6 +80,46 @@
           casks: '{{ cask_packages if plan_platform == "macos" else [] }}'
       tags: [never, validate]
 
+    - name: Verify macOS compiler and SDK can link native programs
+      block:
+        - name: Link a native program with the selected Apple toolchain
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/xcrun
+              - --sdk
+              - macosx
+              - --toolchain
+              - default
+              - clang
+              - -x
+              - c
+              - '-'
+              - -o
+              - /dev/null
+              - -framework
+              - CoreFoundation
+              - -framework
+              - CoreGraphics
+              - -framework
+              - IOKit
+              - -framework
+              - Carbon
+            stdin: 'int main(void) { return 0; }'
+          changed_when: false
+          check_mode: false
+      rescue:
+        - name: Explain how to repair incompatible Apple developer tools
+          ansible.builtin.fail:
+            msg: >-
+              The selected Apple compiler/linker cannot build against its macOS SDK.
+              Update Xcode/Command Line Tools to a compatible version, or select an
+              installed compatible toolchain using DEVELOPER_DIR for this command
+              (see xcode-select -p). Retry make install after repairing it.
+              No dotfiles have been activated.
+              Details: {{ ansible_failed_result.stderr | default(ansible_failed_result.msg) }}
+      when: ansible_facts.system == 'Darwin'
+      tags: [nvim, sketchybar, aerospace-swipe]
+
   tasks:
     - name: Enable required Homebrew taps
       community.general.homebrew_tap:
@@ -174,13 +214,6 @@
         - missing_arch.rc == 127
       tags: deps
 
-    - name: Verify macOS compiler tools for native builds
-      ansible.builtin.command: xcrun --find clang
-      changed_when: false
-      check_mode: false
-      when: ansible_facts.system == 'Darwin'
-      tags: [nvim, sketchybar, aerospace-swipe]
-
     - name: Create zsh plugin directory
       ansible.builtin.file:
         path: '{{ zsh_plugins }}'
@@ -262,7 +295,7 @@
 
     - name: Build SketchyBar helper for this Mac
       ansible.builtin.command:
-        argv: [make, '-B', '-C', '{{ playbook_dir }}/configs/.config/sketchybar/helper']
+        argv: [/usr/bin/xcrun, --sdk, macosx, --toolchain, default, make, '-B', '-C', '{{ playbook_dir }}/configs/.config/sketchybar/helper']
       changed_when: true
       when: ansible_facts.system == 'Darwin'
       tags: sketchybar
@@ -279,7 +312,7 @@
 
     - name: Build AeroSpace Swipe app without starting it
       ansible.builtin.command:
-        argv: [make, '-B', '-C', '{{ swipe_source }}', bundle]
+        argv: [/usr/bin/xcrun, --sdk, macosx, --toolchain, default, make, '-B', '-C', '{{ swipe_source }}', bundle, 'CC=/usr/bin/xcrun --sdk macosx --toolchain default clang']
       changed_when: true
       when: ansible_facts.system == 'Darwin'
       tags: aerospace-swipe
