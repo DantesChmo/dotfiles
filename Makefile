@@ -42,7 +42,7 @@ path_pattern = $(subst $(space),|,$(strip $(foreach path,$(call paths_for,$(1)),
 include_pattern = $(if $(filter .config/%,$(call paths_for,$(1))),\.config$$|)$(call path_pattern,$(1))
 stow_for = stow --dir "$(ROOT)" --target "$(TARGET)" --no-folding $(if $(filter 1,$(DRY_RUN)),--simulate) --ignore='$(if $(strip $(call paths_for,$(1))),^(?!(?:$(call include_pattern,$(1)))).*,.*)' --$(2) configs
 RUN := $(if $(filter 1,$(DRY_RUN)),echo,)
-POST_INSTALL_nvim = env DOTFILES_BOOTSTRAP=1 nvim --headless '+lua require("config.bootstrap").run()'
+POST_INSTALL_nvim = env DOTFILES_BOOTSTRAP=1 nvim --headless '+lua require("config.bootstrap").run()' && $(MAKE) --no-print-directory -C "$(ROOT)" test-nvim
 ANSIBLE_FLAGS ?=
 BECOME_FLAGS ?= $(if $(filter arch,$(PLATFORM)),--ask-become-pass)
 PLAYBOOK = ansible-playbook -i localhost, -c local "$(ROOT)/dependencies.yaml" $(if $(filter 1,$(DRY_RUN)),--check) $(ANSIBLE_FLAGS)
@@ -55,7 +55,7 @@ selection_for = $(sort $(1) $(companions_$(1)))
 
 .DEFAULT_GOAL := help
 .NOTPARALLEL:
-.PHONY: help list ansible check stow deps-stow install deps link sync unlink plan start test test-transactions initialize rollback recover \
+.PHONY: help list ansible check stow deps-stow install deps link sync unlink plan start test test-transactions test-nvim initialize rollback recover \
         $(addprefix install-,$(PACKAGES)) $(addprefix deps-,$(PACKAGES)) \
         $(addprefix link-,$(PACKAGES)) $(addprefix unlink-,$(PACKAGES)) \
         $(addprefix init-,$(PACKAGES)) $(addprefix start-,$(MACOS_ONLY))
@@ -73,6 +73,7 @@ help:
 	  'make start[-<name>]    Start macOS apps/services' \
 	  'make check             Validate dependencies.yaml' \
 	  'make test              Validate YAML and test Stow in an isolated HOME' \
+	  'make test-nvim         Verify installed Neovim plugins, tools and parsers' \
 	  'make rollback          Restore configs from the last successful installation' \
 	  'make recover           Restore an interrupted configuration transaction' \
 	  '' 'Options: DRY_RUN=1 (Stow --simulate), TARGET=/existing/home' \
@@ -174,6 +175,9 @@ start-aerospace-swipe:
 # Tests use real Stow and a disposable HOME; no OS packages or services are changed.
 test-transactions: check
 	@python3 -m unittest discover -s "$(ROOT)/tests" -v
+
+test-nvim:
+	@env DOTFILES_BOOTSTRAP=1 DOTFILES_NVIM_VERIFY="$(ROOT)/tests/verify_nvim.lua" nvim --headless '+lua dofile(vim.env.DOTFILES_NVIM_VERIFY)'
 
 test: check test-transactions
 	@command -v stow >/dev/null || { echo 'Run make stow first.' >&2; exit 1; }

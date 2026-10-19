@@ -80,42 +80,77 @@
           casks: '{{ cask_packages if plan_platform == "macos" else [] }}'
       tags: [never, validate]
 
-    - name: Verify macOS compiler and SDK can link native programs
+    - name: Select a compatible macOS SDK for every native build
       block:
-        - name: Link a native program with the selected Apple toolchain
+        - name: Probe installed SDKs with the selected Apple compiler
           ansible.builtin.command:
             argv:
-              - /usr/bin/xcrun
-              - --sdk
-              - macosx
-              - --toolchain
-              - default
-              - clang
-              - -x
-              - c
-              - '-'
-              - -o
-              - /dev/null
-              - -framework
-              - CoreFoundation
-              - -framework
-              - CoreGraphics
-              - -framework
-              - IOKit
-              - -framework
-              - Carbon
-            stdin: 'int main(void) { return 0; }'
+              - '{{ ansible_playbook_python }}'
+              - -c
+              - |
+                import glob, json, os, pathlib, re, subprocess, sys
+                xcrun = ["/usr/bin/xcrun", "--sdk", "macosx", "--toolchain", "default"]
+                def lookup(option):
+                    return subprocess.check_output(xcrun + option, text=True).strip()
+                compiler = lookup(["--find", "clang"])
+                default_sdk = pathlib.Path(lookup(["--show-sdk-path"]))
+                roots = [default_sdk.parent, pathlib.Path("/Library/Developer/CommandLineTools/SDKs")]
+                roots += [pathlib.Path(p) for p in glob.glob(
+                    "/Applications/Xcode*.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs")]
+                paths = [p for root in roots for p in root.glob("MacOSX*.sdk")]
+                def version(path):
+                    return tuple(int(n) for n in re.findall(r"\d+", path.resolve().name))
+                configured = json.loads(sys.argv[1])
+                candidates = ([pathlib.Path(p) for p in configured] if configured else
+                    [default_sdk] + sorted(paths, key=version, reverse=True))
+                seen, errors = set(), []
+                for candidate in candidates:
+                    sdk = str(candidate.resolve())
+                    if sdk in seen:
+                        continue
+                    seen.add(sdk)
+                    command = [compiler, "-isysroot", sdk, "-x", "c", "-", "-o", "/dev/null"]
+                    for framework in ("CoreFoundation", "CoreGraphics", "IOKit", "Carbon", "Cocoa"):
+                        command += ["-framework", framework]
+                    result = subprocess.run(command, input="int main(void) { return 0; }\n",
+                        text=True, capture_output=True, timeout=30,
+                        env=dict(os.environ, SDKROOT=sdk, TOOLCHAINS="default"))
+                    if result.returncode == 0:
+                        print(json.dumps({"cc": compiler, "sdk": sdk}))
+                        sys.exit(0)
+                    errors.append(sdk + ":\n" + result.stderr)
+                sys.exit("No installed macOS SDK works with " + compiler + "\n" + "\n".join(errors))
+              - '{{ dotfiles_sdk_candidates | default([]) | to_json }}'
+          register: native_probe
           changed_when: false
           check_mode: false
+
+        - name: Use the verified compiler and SDK
+          ansible.builtin.set_fact:
+            native_toolchain: '{{ native_probe.stdout | from_json }}'
+
+        - name: Create the machine-local native build settings directory
+          ansible.builtin.file:
+            path: '{{ data_home }}/dotfiles'
+            state: directory
+            mode: '0755'
+
+        - name: Save the verified toolchain for Neovim parser builds
+          ansible.builtin.copy:
+            dest: '{{ data_home }}/dotfiles/native-toolchain.json'
+            content: '{{ native_toolchain | to_nice_json }}'
+            mode: '0600'
+
+        - name: Show the selected native toolchain
+          ansible.builtin.debug:
+            var: native_toolchain
       rescue:
-        - name: Explain how to repair incompatible Apple developer tools
+        - name: Report that none of the installed Apple SDKs can link
           ansible.builtin.fail:
             msg: >-
-              The selected Apple compiler/linker cannot build against its macOS SDK.
-              Update Xcode/Command Line Tools to a compatible version, or select an
-              installed compatible toolchain using DEVELOPER_DIR for this command
-              (see xcode-select -p). Retry make install after repairing it.
-              No dotfiles have been activated.
+              None of the installed macOS SDKs could be linked with the selected Apple compiler.
+              Update Xcode/Command Line Tools or select a compatible installation using
+              DEVELOPER_DIR. No dotfiles have been activated.
               Details: {{ ansible_failed_result.stderr | default(ansible_failed_result.msg) }}
       when: ansible_facts.system == 'Darwin'
       tags: [nvim, sketchybar, aerospace-swipe]
@@ -295,7 +330,7 @@
 
     - name: Build SketchyBar helper for this Mac
       ansible.builtin.command:
-        argv: [/usr/bin/xcrun, --sdk, macosx, --toolchain, default, make, '-B', '-C', '{{ playbook_dir }}/configs/.config/sketchybar/helper']
+        argv: [/usr/bin/xcrun, --sdk, '{{ native_toolchain.sdk }}', --toolchain, default, make, '-B', '-C', '{{ playbook_dir }}/configs/.config/sketchybar/helper', 'CC={{ native_toolchain.cc | quote }} -isysroot {{ native_toolchain.sdk | quote }}']
       changed_when: true
       when: ansible_facts.system == 'Darwin'
       tags: sketchybar
@@ -312,7 +347,7 @@
 
     - name: Build AeroSpace Swipe app without starting it
       ansible.builtin.command:
-        argv: [/usr/bin/xcrun, --sdk, macosx, --toolchain, default, make, '-B', '-C', '{{ swipe_source }}', bundle, 'CC=/usr/bin/xcrun --sdk macosx --toolchain default clang']
+        argv: [/usr/bin/xcrun, --sdk, '{{ native_toolchain.sdk }}', --toolchain, default, make, '-B', '-C', '{{ swipe_source }}', bundle, 'CC={{ native_toolchain.cc | quote }} -isysroot {{ native_toolchain.sdk | quote }}']
       changed_when: true
       when: ansible_facts.system == 'Darwin'
       tags: aerospace-swipe

@@ -30,6 +30,8 @@ if vim.env.DOTFILES_BOOTSTRAP == "1" then
 end
 require("lazy").setup({
   lockfile = lockfile,
+  concurrency = 8,
+  git = { timeout = 300 },
   defaults = { lazy = vim.env.DOTFILES_BOOTSTRAP == "1" },
   install = { missing = vim.env.DOTFILES_BOOTSTRAP ~= "1" },
   spec = {

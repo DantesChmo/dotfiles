@@ -6,8 +6,9 @@ return {
     ft = "swift",  -- загружается только при открытии .swift
     config = function()
       require("swift").setup({
-        -- здесь можно указать дополнительные опции
-        -- например: auto_open_scheme_picker = true
+        -- SourceKit is configured below with vim.lsp.config. Avoid a second
+        -- setup through swift.nvim's deprecated lspconfig API.
+        features = { lsp = { auto_setup = false } },
       })
     end,
   },
@@ -173,6 +174,15 @@ return {
         cmd = { "kotlin-language-server" },
         filetypes = { "kotlin" },
         root_markers = { "settings.gradle", "settings.gradle.kts", ".git" },
+        -- lspconfig's default can become an empty Lua table when the editor
+        -- starts outside a Gradle project. Kotlin expects a JSON object.
+        init_options = { storagePath = vim.fn.stdpath("cache") .. "/kotlin-language-server" },
+        before_init = function(params, config)
+          local root = config.root_dir or vim.fn.getcwd()
+          local cache = vim.fn.stdpath("cache") .. "/kotlin-language-server/" .. vim.fn.sha256(root):sub(1, 16)
+          vim.fn.mkdir(cache, "p")
+          params.initializationOptions = { storagePath = cache }
+        end,
         capabilities = capabilities,
         on_attach = on_attach,
       }
