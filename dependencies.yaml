@@ -781,6 +781,34 @@
               ansible.builtin.command:
                 argv: [cp, '-RLp', '{{ tx_new.path }}/stage/.', '{{ tx_new.path }}/source/configs/']
 
+            - name: Detect the built-in display's notch for AeroSpace
+              ansible.builtin.command:
+                argv: [osascript, -l, JavaScript]
+                stdin: |
+                  ObjC.import('AppKit');
+                  ObjC.import('CoreGraphics');
+                  const screens = $.NSScreen.screens;
+                  let gap = 44;
+                  for (let i = 0; i < screens.count; i++) {
+                    const screen = screens.objectAtIndex(i);
+                    const id = screen.deviceDescription.objectForKey('NSScreenNumber').unsignedIntValue;
+                    if ($.CGDisplayIsBuiltin(id)) {
+                      gap = screen.safeAreaInsets.top > 0 ? 12 : 44;
+                    }
+                  }
+                  String(gap);
+              register: tx_aerospace_top_gap
+              changed_when: false
+              failed_when: tx_aerospace_top_gap.rc != 0 or tx_aerospace_top_gap.stdout | trim not in ['12', '44']
+              when: "'aerospace' in tx_configs"
+
+            - name: Reserve SketchyBar space in the frozen AeroSpace config
+              ansible.builtin.replace:
+                path: '{{ tx_new.path }}/source/configs/.config/aerospace/aerospace.toml'
+                regexp: "(?m)^outer\\.top = \\[\\{ monitor\\.'built-in' = 44 \\}, 42\\]$"
+                replace: "outer.top = [{ monitor.'built-in' = {{ tx_aerospace_top_gap.stdout | trim | int }} }, 42]"
+              when: "'aerospace' in tx_configs"
+
             - name: Compare the candidate with the previous successful release
               ansible.builtin.command:
                 argv: [diff, '-qr', '{{ tx_latest }}/source/configs', '{{ tx_new.path }}/source/configs']

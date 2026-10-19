@@ -39,7 +39,9 @@ inner.horizontal = 12
 inner.vertical =   12
 outer.left = 12
 outer.bottom = 12
-outer.top = [{ monitor.'built-in' = 12 }, 42]
+# Без чёлки: SketchyBar (32 px) + зазор (12 px).
+# make install-aerospace оставляет 12 px на встроенном экране с чёлкой.
+outer.top = [{ monitor.'built-in' = 44 }, 42]
 outer.right = 12
 
 # ============================================

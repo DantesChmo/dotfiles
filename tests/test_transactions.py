@@ -63,6 +63,41 @@ class Transactions(unittest.TestCase):
         self.assertFalse((self.state / "pending").exists())
         self.assertFalse((self.state / "lock").exists())
 
+    def test_aerospace_display_gap_is_frozen_and_idempotent(self):
+        import tomllib
+
+        payload = self.repo / "configs/.config/aerospace"
+        payload.mkdir()
+        source = payload / "aerospace.toml"
+        shutil.copy(ROOT / "configs/.config/aerospace/aerospace.toml", source)
+        original = source.read_text()
+        mock_bin = self.base / "bin"
+        mock_bin.mkdir()
+        probe = mock_bin / "osascript"
+        probe.write_text('#!/bin/sh\ncat >/dev/null\nprintf "%s\\n" "$DOTFILES_TEST_TOP_GAP"\n')
+        probe.chmod(0o755)
+        extra = {"dotfiles_paths": [".config/aerospace"], "dotfiles_configs": ["aerospace"]}
+        for gap in ("44", "12"):
+            env = {"PATH": str(mock_bin) + os.pathsep + self.env["PATH"],
+                   "DOTFILES_TEST_TOP_GAP": gap}
+            self.action("install", env=env, extra=extra)
+            release = self.latest()
+            active = self.home / ".config/aerospace/aerospace.toml"
+            config = tomllib.loads(active.read_text())
+            self.assertEqual(config["gaps"]["outer"]["top"],
+                             [{"monitor": {"built-in": int(gap)}}, 42])
+            self.assertEqual(source.read_text(), original)
+            self.action("install", env=env, extra=extra)
+            self.assertEqual(self.latest(), release)
+            self.assert_unlocked()
+        self.action("install", fail=True, extra=extra,
+                    env={"PATH": str(mock_bin) + os.pathsep + self.env["PATH"],
+                         "DOTFILES_TEST_TOP_GAP": "invalid"})
+        self.assertEqual(self.latest(), release)
+        self.assertEqual(tomllib.loads(active.read_text())["gaps"]["outer"]["top"][0],
+                         {"monitor": {"built-in": 12}})
+        self.assert_unlocked()
+
     def test_one_command_versions_idempotence_failure_and_rollback(self):
         old = self.home / ".config/demo"
         old.mkdir(parents=True)
