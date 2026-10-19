@@ -102,11 +102,52 @@
       when: ansible_facts.system == 'Darwin' and brew_packages | length > 0
       tags: deps
 
+    # accept_external_apps in community.general only recognises the old Brew
+    # error text. Inspect bundles before installation instead of relying on it.
     - name: Install missing macOS apps and fonts
-      community.general.homebrew_cask:
-        name: '{{ cask_packages }}'
-        state: present
-        accept_external_apps: true
+      block:
+        - name: Read selected Homebrew cask artifacts
+          ansible.builtin.command:
+            argv: '{{ ["brew", "info", "--json=v2", "--cask"] + cask_packages }}'
+          register: cask_info
+          changed_when: false
+          check_mode: false
+
+        - name: Initialise app bundle inventory
+          ansible.builtin.set_fact:
+            cask_apps: []
+
+        - name: Discover app bundle destinations from Homebrew metadata
+          ansible.builtin.set_fact:
+            cask_apps: '{{ cask_apps + [{"cask": item.0.full_token, "paths": [app_target, home_dir + "/Applications/" + (app_target | basename)] | unique}] }}'
+          vars:
+            app_target: '{{ item.1.target | default("/Applications/" + (item.1.app[0] | basename)) }}'
+          loop: '{{ (cask_info.stdout | from_json).casks | subelements("artifacts") }}'
+          loop_control:
+            label: '{{ item.0.full_token }}'
+          when: item.1.app is defined
+
+        - name: Check existing app bundles including manually installed apps
+          ansible.builtin.stat:
+            path: '{{ item.1 }}/Contents/Info.plist'
+            follow: true
+            get_checksum: false
+            get_mime: false
+            get_attributes: false
+          loop: '{{ cask_apps | subelements("paths") }}'
+          loop_control:
+            label: '{{ item.1 }}'
+          register: cask_app_checks
+
+        - name: Keep existing apps and install remaining casks
+          community.general.homebrew_cask:
+            name: '{{ cask_packages | difference(existing_app_casks) }}'
+            state: present
+          vars:
+            present_apps: '{{ cask_app_checks.results | selectattr("stat.isreg", "defined") | selectattr("stat.isreg") | map(attribute="item.0") | unique | list }}'
+            missing_app_casks: '{{ cask_apps | difference(present_apps) | map(attribute="cask") | unique | list }}'
+            existing_app_casks: '{{ cask_apps | map(attribute="cask") | unique | difference(missing_app_casks) }}'
+          when: cask_packages | difference(existing_app_casks) | length > 0
       when: ansible_facts.system == 'Darwin' and cask_packages | length > 0
       tags: deps
 
