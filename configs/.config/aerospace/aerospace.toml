@@ -1,0 +1,156 @@
+# Основные настройки
+
+after-startup-command = [
+  'exec-and-forget sketchybar --reload',
+  # 'exec-and-forget borders active_color=0xffe1e3e4 inactive_color=0xff494d64 width=5.0 radius=12.0',
+  'exec-and-forget borders active_color=0xffffc0cb inactive_color=0xff494d64 width=10.0'
+]
+
+# Mouse follows the focused window. The previous Übersicht/simple-bar callback
+# required a widget that is not part of these dotfiles; SketchyBar uses the
+# workspace callback below instead.
+on-focus-changed = [
+  "move-mouse window-lazy-center"
+]
+
+# Notify sketchybar about workspace change
+exec-on-workspace-change = [
+  '/bin/bash', '-c',
+  'sketchybar --trigger aerospace_workspace_change FOCUSED_WORKSPACE=$AEROSPACE_FOCUSED_WORKSPACE PREV_WORKSPACE=$AEROSPACE_PREV_WORKSPACE'
+]
+
+# Автоматический запуск при логине
+start-at-login = true
+
+# Нормализация границ (как в i3)
+enable-normalization-flatten-containers = false
+enable-normalization-opposite-orientation-for-nested-containers = true
+
+# Поведение окон
+default-root-container-layout = 'tiles'
+default-root-container-orientation = 'auto'
+
+# Режим фокуса (что происходит при наведении мыши)
+on-focused-monitor-changed = ['move-mouse monitor-lazy-center']
+
+# Отступы между окнами
+[gaps]
+inner.horizontal = 12
+inner.vertical =   12
+outer.left = 12
+outer.bottom = 12
+outer.top = [{ monitor.'built-in' = 12 }, 42]
+outer.right = 12
+
+# ============================================
+# ГОРЯЧИЕ КЛАВИШИ
+# ============================================
+
+[mode.main.binding]
+
+# --- Управление фокусом ---
+# Alt + hjkl для перемещения фокуса (Vim-style)
+alt-h = 'focus left'
+alt-j = 'focus down'
+alt-k = 'focus up'
+alt-l = 'focus right'
+
+alt-o = 'focus-monitor up'
+alt-i = 'focus-monitor down'
+
+# --- Перемещение окон ---
+# Alt + Shift + hjkl для перемещения окон
+alt-shift-h = 'move left'
+alt-shift-j = 'move down'
+alt-shift-k = 'move up'
+alt-shift-l = 'move right'
+
+# --- Воркспейсы (рабочие столы) ---
+# Alt + цифра для переключения на воркспейс
+alt-1 = 'workspace 1'
+alt-2 = 'workspace 2'
+alt-3 = 'workspace 3'
+alt-4 = 'workspace 4'
+alt-5 = 'workspace 5'
+alt-6 = 'workspace 6'
+alt-7 = 'workspace 7'
+alt-8 = 'workspace 8'
+alt-9 = 'workspace 9'
+
+# Alt + Shift + цифра для перемещения окна на воркспейс
+alt-shift-1 = ['move-node-to-workspace 1', 'workspace 1']
+alt-shift-2 = ['move-node-to-workspace 2', 'workspace 2']
+alt-shift-3 = ['move-node-to-workspace 3', 'workspace 3']
+alt-shift-4 = ['move-node-to-workspace 4', 'workspace 4']
+alt-shift-5 = ['move-node-to-workspace 5', 'workspace 5']
+alt-shift-6 = ['move-node-to-workspace 6', 'workspace 6']
+alt-shift-7 = ['move-node-to-workspace 7', 'workspace 7']
+alt-shift-8 = ['move-node-to-workspace 8', 'workspace 8']
+alt-shift-9 = ['move-node-to-workspace 9', 'workspace 9']
+
+# --- Управление мониторами ---
+alt-shift-o = 'move-node-to-monitor up'
+alt-shift-i = 'move-node-to-monitor down'
+
+alt-shift-ctrl-o = 'move-workspace-to-monitor up'
+alt-shift-ctrl-i = 'move-workspace-to-monitor down'
+
+# --- Режимы окон ---
+# Alt + f = fullscreen
+alt-f = ['fullscreen', 'exec-and-forget sketchybar --trigger aerospace_workspace_change FOCUSED_WORKSPACE=$(aerospace list-workspaces --focused)']
+
+# Alt + Shift + Space = toggle floating (плавающее окно)
+alt-shift-space = ['layout floating tiling', 'exec-and-forget sketchybar --trigger aerospace_workspace_change FOCUSED_WORKSPACE=$(aerospace list-workspaces --focused)']
+
+# --- Изменение размера окон ---
+# Alt + r = режим изменения размера
+alt-r = ['mode resize', 'exec-and-forget sketchybar --set aerospace_mode drawing=on']
+
+# --- Splits ---
+alt-s = 'split horizontal'
+alt-v = 'split vertical'
+
+# --- Layout ---
+# Alt + s = горизонтальный split
+# Alt + v = вертикальный split
+alt-shift-s = ['layout h_tiles', 'exec-and-forget sketchybar --trigger aerospace_workspace_change FOCUSED_WORKSPACE=$(aerospace list-workspaces --focused)']
+alt-shift-v = ['layout v_tiles', 'exec-and-forget sketchybar --trigger aerospace_workspace_change FOCUSED_WORKSPACE=$(aerospace list-workspaces --focused)']
+
+alt-shift-slash = ['layout tiles h_accordion', 'exec-and-forget sketchybar --trigger aerospace_workspace_change FOCUSED_WORKSPACE=$(aerospace list-workspaces --focused)']
+
+# Alt + e = переключить layout
+alt-e = ['layout tiles horizontal vertical', 'exec-and-forget sketchybar --trigger aerospace_workspace_change FOCUSED_WORKSPACE=$(aerospace list-workspaces --focused)']
+
+# --- Системное ---
+# Alt + Shift + c = закрыть окно
+alt-shift-c = 'close'
+
+# Alt + Shift + r = перезагрузить конфигурацию
+alt-shift-r = 'reload-config'
+
+# Alt + Shift + Enter = открыть iTerm
+alt-shift-enter = '''exec-and-forget osascript -e '
+tell application "iTerm"
+    create window with default profile
+    activate
+end tell'
+'''
+
+# ============================================
+# РЕЖИМ ИЗМЕНЕНИЯ РАЗМЕРА
+# ============================================
+
+[mode.resize.binding]
+# h/j/k/l для изменения размера
+h = 'resize width -25'
+j = 'resize height +25'
+k = 'resize height -25'
+l = 'resize width +25'
+
+# Esc или Enter для выхода из режима
+esc = ['mode main', 'exec-and-forget sketchybar --set aerospace_mode drawing=off']
+enter = ['mode main', 'exec-and-forget sketchybar --set aerospace_mode drawing=off']
+
+# GUI apps inherit a minimal PATH. Support both Apple Silicon and Intel Homebrew.
+[exec.env-vars]
+PATH = '${HOME}/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:${PATH}'

@@ -1,0 +1,11 @@
+# Local state and secrets are never installed by Stow.
+\.git
+\.gitignore
+\.gitmodules
+\.DS_Store
+\.claude
+\.zsh\.secrets
+\.env
+\.env\..*
+.*\.bak
+.*~

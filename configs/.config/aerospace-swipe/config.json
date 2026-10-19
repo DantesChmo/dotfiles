@@ -1,0 +1,10 @@
+{
+  "haptic": true,
+  "natural_swipe": true,
+  "wrap_around": true,
+  "skip_empty": false,
+  "fingers": 3,
+  "swipe_tolerance": 2,
+  "velocity_pct": 0.25,
+  "distance_pct": 0.06
+}

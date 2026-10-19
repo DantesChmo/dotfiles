@@ -1,0 +1,70 @@
+{
+  "$schema": "https://opencode.ai/theme.json",
+  "defs": {
+    "bg0": "#282828",
+    "bg1": "#32302f",
+    "bg3": "#45403d",
+    "bg5": "#5a524c",
+    "fg0": "#d4be98",
+    "fg1": "#ddc7a1",
+    "red": "#ea6962",
+    "orange": "#e78a4e",
+    "yellow": "#d8a657",
+    "green": "#a9b665",
+    "aqua": "#89b482",
+    "blue": "#7daea3",
+    "purple": "#d3869b",
+    "grey0": "#7c6f64",
+    "grey1": "#928374",
+    "grey2": "#a89984"
+  },
+  "theme": {
+    "primary": "blue",
+    "secondary": "purple",
+    "accent": "yellow",
+    "error": "red",
+    "warning": "orange",
+    "success": "green",
+    "info": "aqua",
+
+    "text": "fg0",
+    "textMuted": "grey1",
+
+    "background": "none",
+    "backgroundPanel": "none",
+    "backgroundElement": "none",
+
+    "border": "bg3",
+    "borderActive": "grey0",
+    "borderSubtle": "bg1",
+
+    "syntaxComment": "grey1",
+    "syntaxKeyword": "red",
+    "syntaxFunction": "green",
+    "syntaxVariable": "blue",
+    "syntaxString": "green",
+    "syntaxNumber": "purple",
+    "syntaxType": "yellow",
+    "syntaxOperator": "orange",
+    "syntaxPunctuation": "fg1",
+
+    "diffAdded": "green",
+    "diffRemoved": "red",
+    "diffContext": "grey1",
+    "diffHunkHeader": "grey2",
+    "diffAddedBg": "none",
+    "diffRemovedBg": "none",
+    "diffContextBg": "none",
+
+    "markdownText": "fg0",
+    "markdownHeading": "yellow",
+    "markdownLink": "blue",
+    "markdownLinkText": "aqua",
+    "markdownCode": "green",
+    "markdownBlockQuote": "grey1",
+    "markdownEmph": "orange",
+    "markdownStrong": "yellow",
+    "markdownListItem": "fg0",
+    "markdownCodeBlock": "fg1"
+  }
+}

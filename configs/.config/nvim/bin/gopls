@@ -1,0 +1,17 @@
+#!/bin/sh
+# Обёртка над gopls для Аркадии.
+# Аркадия — GOPATH-режим с префиксом импортов a.yandex-team.ru и без go.mod.
+# Если gopls стартует внутри рабочей копии Аркадии (вверх по дереву от cwd
+# находится .arcadia.root), включаем GOPATH-режим; иначе — ничего не трогаем,
+# и обычные go.mod-проекты работают в module-режиме как раньше.
+dir="$PWD"
+while [ "$dir" != "/" ] && [ -n "$dir" ]; do
+  if [ -e "$dir/.arcadia.root" ]; then
+    export GO111MODULE=off
+    export GOPATH="$HOME/go"
+    export GOWORK=off
+    break
+  fi
+  dir=$(dirname "$dir")
+done
+exec "${DOTFILES_MASON_GOPLS:-${XDG_DATA_HOME:-$HOME/.local/share}/${NVIM_APPNAME:-nvim}/mason/bin/gopls}" "$@"

@@ -1,0 +1,10 @@
+.DS_Store
+.zsh.secrets
+/.local/
+*.bak
+*.tui-migration.bak
+.claude/
+node_modules/
+/nvim.log
+__pycache__/
+*.pyc

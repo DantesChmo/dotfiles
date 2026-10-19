@@ -1,0 +1,864 @@
+---
+- name: Install dotfiles dependencies locally
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  gather_subset: [min, '!env']
+  vars:
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+    home_dir: '{{ lookup("ansible.builtin.env", "HOME") }}'
+    data_home: '{{ lookup("ansible.builtin.env", "XDG_DATA_HOME") | default(home_dir + "/.local/share", true) }}'
+    nvm_dir: '{{ lookup("ansible.builtin.env", "NVM_DIR") | default(home_dir + "/.nvm", true) }}'
+    goenv_dir: '{{ lookup("ansible.builtin.env", "GOENV_ROOT") | default(home_dir + "/.goenv", true) }}'
+    zsh_plugins: '{{ data_home }}/dotfiles/zsh'
+    swipe_source: '{{ data_home }}/aerospace-swipe'
+
+    # Edit dependency lists here. Config files are still discovered from configs/.
+    dependency_sets:
+      stow:
+        brew: [stow]
+        pacman: [stow]
+      zsh:
+        brew: [zsh, git, curl, xz, fzf, eza, vivid, yazi, ffmpeg, sevenzip, jq, poppler, fd, ripgrep, zoxide, resvg, imagemagick, go, python, 'openjdk@17', kubernetes-cli, kubectx, docker, docker-compose, libpq, hashicorp/tap/terraform]
+        casks: [font-meslo-lg-nerd-font]
+        pacman: [zsh, git, curl, xz, fzf, eza, vivid, yazi, file, ffmpeg, 7zip, jq, poppler, fd, ripgrep, zoxide, resvg, imagemagick, go, python, python-pip, jdk17-openjdk, kubectl, kubectx, docker, docker-compose, postgresql-libs, terraform, ttf-meslo-nerd, xclip, wl-clipboard]
+      nvim:
+        brew: [neovim, fzf, ripgrep, fd, curl, unzip, tree-sitter-cli, node, go, python, 'openjdk@21', maven, gradle, sqlite, docker, docker-compose, k9s, kubernetes-cli]
+        casks: [font-meslo-lg-nerd-font]
+        pacman: [neovim, fzf, ripgrep, fd, curl, unzip, tree-sitter-cli, nodejs, npm, go, python, jdk21-openjdk, maven, gradle, sqlite, base-devel, wl-clipboard, xclip, ttf-meslo-nerd, docker, docker-compose, k9s, kubectl]
+      btop:
+        brew: [btop]
+        pacman: [btop]
+      opencode:
+        brew: [opencode]
+        pacman: [opencode, wl-clipboard, xclip]
+      aerospace:
+        brew: [FelixKratz/formulae/sketchybar, FelixKratz/formulae/borders]
+        casks: [nikitabobko/tap/aerospace, font-hack-nerd-font, iterm2]
+      aerospace-swipe:
+        casks: [nikitabobko/tap/aerospace]
+      hammerspoon:
+        casks: [hammerspoon, zen]
+      sketchybar:
+        brew: [FelixKratz/formulae/sketchybar, FelixKratz/formulae/borders]
+        casks: [nikitabobko/tap/aerospace, font-hack-nerd-font]
+
+    requested_configs: '{{ ansible_run_tags | difference(["deps", "validate"]) }}'
+    selected_configs: '{{ dependency_sets.keys() | list if "all" in ansible_run_tags or requested_configs | length == 0 else requested_configs }}'
+    selected_groups: '{{ dependency_sets | dict2items | selectattr("key", "in", selected_configs) | map(attribute="value") | list }}'
+    brew_packages: '{{ selected_groups | map(attribute="brew", default=[]) | flatten | unique }}'
+    cask_packages: '{{ selected_groups | map(attribute="casks", default=[]) | flatten | unique }}'
+    pacman_packages: '{{ selected_groups | map(attribute="pacman", default=[]) | flatten | unique }}'
+    plan_platform: '{{ dotfiles_plan_platform | default("macos" if ansible_facts.system == "Darwin" else "arch") }}'
+
+    zsh_repositories:
+      ohmyzsh: https://github.com/ohmyzsh/ohmyzsh.git
+      zsh-async: https://github.com/mafredri/zsh-async.git
+      powerlevel10k: https://github.com/romkatv/powerlevel10k.git
+      fzf-tab: https://github.com/Aloxaf/fzf-tab.git
+      zsh-autosuggestions: https://github.com/zsh-users/zsh-autosuggestions.git
+      zsh-syntax-highlighting: https://github.com/zsh-users/zsh-syntax-highlighting.git
+      zsh-history-substring-search: https://github.com/zsh-users/zsh-history-substring-search.git
+
+  environment:
+    PATH: '{{ home_dir }}/.local/bin:/opt/homebrew/bin:/usr/local/bin:{{ lookup("ansible.builtin.env", "PATH") }}'
+
+  pre_tasks:
+    - name: Require macOS or Arch Linux
+      ansible.builtin.assert:
+        that: ansible_facts.system == 'Darwin' or ansible_facts.os_family == 'Archlinux'
+        fail_msg: 'Supported platforms: macOS and Arch Linux.'
+        quiet: true
+      tags: always
+
+    - name: Show selected dependency lists
+      ansible.builtin.debug:
+        msg:
+          platform: '{{ plan_platform }}'
+          configs: '{{ selected_configs }}'
+          packages: '{{ brew_packages if plan_platform == "macos" else pacman_packages }}'
+          casks: '{{ cask_packages if plan_platform == "macos" else [] }}'
+      tags: [never, validate]
+
+  tasks:
+    - name: Enable required Homebrew taps
+      community.general.homebrew_tap:
+        name: '{{ item.tap }}'
+        state: present
+      loop:
+        - {tap: hashicorp/tap, configs: [zsh]}
+        - {tap: FelixKratz/formulae, configs: [aerospace, sketchybar]}
+        - {tap: nikitabobko/tap, configs: [aerospace, aerospace-swipe, sketchybar]}
+      when:
+        - ansible_facts.system == 'Darwin'
+        - selected_configs | intersect(item.configs) | length > 0
+      tags: deps
+
+    - name: Install missing Homebrew formulae
+      community.general.homebrew:
+        name: '{{ brew_packages }}'
+        state: present
+        force_formula: true
+      when: ansible_facts.system == 'Darwin' and brew_packages | length > 0
+      tags: deps
+
+    - name: Install missing macOS apps and fonts
+      community.general.homebrew_cask:
+        name: '{{ cask_packages }}'
+        state: present
+        accept_external_apps: true
+      when: ansible_facts.system == 'Darwin' and cask_packages | length > 0
+      tags: deps
+
+    - name: Check which Arch dependencies are missing
+      ansible.builtin.command:
+        argv: '{{ ["pacman", "-T"] + pacman_packages }}'
+      register: missing_arch
+      changed_when: false
+      failed_when: missing_arch.rc not in [0, 127]
+      check_mode: false
+      when: ansible_facts.os_family == 'Archlinux' and pacman_packages | length > 0
+      tags: deps
+
+    - name: Install missing Arch packages with a full system upgrade
+      community.general.pacman:
+        name: '{{ pacman_packages }}'
+        state: present
+        update_cache: true
+        upgrade: true
+      become: true
+      when:
+        - ansible_facts.os_family == 'Archlinux'
+        - pacman_packages | length > 0
+        - missing_arch.rc == 127
+      tags: deps
+
+    - name: Verify macOS compiler tools for native builds
+      ansible.builtin.command: xcrun --find clang
+      changed_when: false
+      check_mode: false
+      when: ansible_facts.system == 'Darwin'
+      tags: [nvim, sketchybar, aerospace-swipe]
+
+    - name: Create zsh plugin directory
+      ansible.builtin.file:
+        path: '{{ zsh_plugins }}'
+        state: directory
+        mode: '0755'
+      tags: zsh
+
+    - name: Install zsh plugins without resetting existing checkouts
+      ansible.builtin.git:
+        repo: '{{ item.value }}'
+        dest: '{{ zsh_plugins }}/{{ item.key }}'
+        depth: 1
+        update: false
+        recursive: false
+      loop: '{{ zsh_repositories | dict2items }}'
+      loop_control:
+        label: '{{ item.key }}'
+      tags: zsh
+
+    - name: Check existing nvm installation
+      ansible.builtin.stat:
+        get_checksum: false
+        get_mime: false
+        get_attributes: false
+        path: '{{ nvm_dir }}/nvm.sh'
+      register: nvm_script
+      tags: zsh
+
+    - name: Install upstream nvm if absent
+      ansible.builtin.git:
+        repo: https://github.com/nvm-sh/nvm.git
+        dest: '{{ nvm_dir }}'
+        depth: 1
+        update: false
+        recursive: false
+      when: not nvm_script.stat.exists
+      tags: zsh
+
+    - name: Install Node LTS only when nvm has no default
+      ansible.builtin.shell: |
+        set -e
+        . "$NVM_DIR/nvm.sh" --no-use
+        if [ "$(nvm version default)" = 'N/A' ]; then
+          nvm install --lts
+          nvm alias default 'lts/*'
+          printf '\nDOTFILES_NODE_INSTALLED\n'
+        fi
+      args:
+        executable: /bin/bash
+      environment:
+        NVM_DIR: '{{ nvm_dir }}'
+      register: node_lts
+      changed_when: "'DOTFILES_NODE_INSTALLED' in node_lts.stdout"
+      tags: zsh
+
+    - name: Find a pre-existing goenv command
+      ansible.builtin.command: goenv --version
+      register: goenv_command
+      failed_when: false
+      changed_when: false
+      check_mode: false
+      tags: zsh
+
+    - name: Install goenv if absent
+      ansible.builtin.git:
+        repo: https://github.com/go-nv/goenv.git
+        dest: '{{ goenv_dir }}'
+        depth: 1
+        update: false
+        recursive: false
+      when: goenv_command.rc != 0
+      tags: zsh
+
+    - name: Prepare Powerlevel10k gitstatus for the first prompt
+      ansible.builtin.command:
+        argv: ['{{ zsh_plugins }}/powerlevel10k/gitstatus/install']
+      changed_when: false
+      tags: zsh
+
+    - name: Build SketchyBar helper for this Mac
+      ansible.builtin.command:
+        argv: [make, '-B', '-C', '{{ playbook_dir }}/configs/.config/sketchybar/helper']
+      changed_when: true
+      when: ansible_facts.system == 'Darwin'
+      tags: sketchybar
+
+    - name: Install AeroSpace Swipe sources
+      ansible.builtin.git:
+        repo: https://github.com/acsandmann/aerospace-swipe.git
+        dest: '{{ swipe_source }}'
+        depth: 1
+        update: false
+        recursive: false
+      when: ansible_facts.system == 'Darwin'
+      tags: aerospace-swipe
+
+    - name: Build AeroSpace Swipe app without starting it
+      ansible.builtin.command:
+        argv: [make, '-B', '-C', '{{ swipe_source }}', bundle]
+      changed_when: true
+      when: ansible_facts.system == 'Darwin'
+      tags: aerospace-swipe
+
+    - name: Create per-user LaunchAgents directory
+      ansible.builtin.file:
+        path: '{{ lookup("ansible.builtin.env", "TARGET") | default(home_dir, true) }}/Library/LaunchAgents'
+        state: directory
+        mode: '0755'
+      when: ansible_facts.system == 'Darwin'
+      tags: [never, activation]
+
+    - name: Register the Swipe app for explicit activation by make start
+      ansible.builtin.copy: &swipe_agent_copy
+        dest: '{{ lookup("ansible.builtin.env", "TARGET") | default(home_dir, true) }}/Library/LaunchAgents/com.acsandmann.swipe.plist'
+        mode: '0644'
+        content: |
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>Label</key><string>com.acsandmann.swipe</string>
+            <key>ProgramArguments</key><array><string>{{ (swipe_source + '/AerospaceSwipe.app/Contents/MacOS/AerospaceSwipe') | e }}</string></array>
+            <key>RunAtLoad</key><true/>
+            <key>KeepAlive</key><true/>
+            <key>LimitLoadToSessionType</key><string>Aqua</string>
+            <key>ProcessType</key><string>Interactive</string>
+          </dict></plist>
+      when: ansible_facts.system == 'Darwin'
+      tags: [never, activation]
+
+# Stow still creates every config link. Ansible only checkpoints/replaces whole
+# config roots and restores them on failure. Release copies keep Git pulls from
+# modifying the active configuration before the transaction has committed.
+- name: Deploy or restore a configuration transaction
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tags: [never, transaction]
+  vars:
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+    tx_action: '{{ dotfiles_action | default("preflight") }}'
+    tx_root: '{{ lookup("ansible.builtin.env", "DOTFILES_ROOT") | default(playbook_dir, true) }}'
+    tx_target: '{{ lookup("ansible.builtin.env", "TARGET") | default(lookup("ansible.builtin.env", "HOME"), true) }}'
+    tx_state: '{{ lookup("ansible.builtin.env", "DOTFILES_STATE_DIR") | default(lookup("ansible.builtin.env", "HOME") + "/.local/state/dotfiles", true) }}'
+    tx_configs: '{{ dotfiles_configs | default([]) }}'
+    tx_payload: '{{ dotfiles_paths | default([]) }}'
+    tx_paths: '{{ tx_payload + (["Library/LaunchAgents/com.acsandmann.swipe.plist"] if "aerospace-swipe" in tx_configs else []) }}'
+    tx_parents: >-
+      {%- set ns = namespace(paths=[]) -%}
+      {%- for path in tx_paths -%}
+      {%- for depth in range(1, path.split('/') | length) -%}
+      {%- set ns.paths = ns.paths + [path.split('/')[:depth] | join('/')] -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ ns.paths | unique | list }}
+    tx_policy: '{{ lookup("ansible.builtin.env", "DOTFILES_CONFLICTS") | default("backup", true) }}'
+    swipe_source: '{{ (lookup("ansible.builtin.env", "XDG_DATA_HOME") | default(lookup("ansible.builtin.env", "HOME") + "/.local/share", true)) + "/aerospace-swipe" }}'
+    tx_pattern: '^(?!(?:{{ "[.]config$|" if tx_payload | select("match", "^[.]config/") | list | length else "" }}{{ tx_payload | map("regex_escape") | map("regex_replace", "$", "(/|$)") | join("|") }})).*'
+    tx_stow: [stow, '--dir', '{{ tx_root }}', '--target', '{{ tx_target }}', '--no-folding', '--ignore={{ tx_pattern }}']
+  tasks:
+    - name: Validate transaction inputs
+      ansible.builtin.assert:
+        that:
+          - tx_action in ['preflight', 'install', 'rollback', 'recover']
+          - tx_policy in ['backup', 'abort']
+          - tx_target is abs
+          - tx_state is abs
+          - tx_action in ['rollback', 'recover'] or tx_payload | length > 0
+          - not ansible_check_mode
+          - tx_configs | intersect(['nvim', 'hammerspoon', 'aerospace-swipe']) | length == 0 or (tx_target | realpath) == (lookup('ansible.builtin.env', 'HOME') | realpath)
+        fail_msg: 'Transactions require an absolute TARGET/STATE_DIR. Use make plan for a read-only preview.'
+
+    - name: Validate managed relative paths
+      vars:
+        managed_path: '{{ ((tx_target + "/" + item) | dirname | realpath) + "/" + (item | basename) }}'
+      ansible.builtin.assert:
+        that:
+          - item is not abs
+          - "'..' not in item.split('/')"
+          - "item not in ['.', '.config', '.local']"
+          - not ((tx_state | realpath) + '/').startswith(managed_path + '/')
+          - not (managed_path + '/').startswith((tx_state | realpath) + '/')
+          - not ((tx_root | realpath) + '/').startswith(managed_path + '/')
+      loop: '{{ tx_paths }}'
+
+    - name: Inspect the target and managed parents before installing dependencies
+      ansible.builtin.stat:
+        get_checksum: false
+        get_mime: false
+        get_attributes: false
+        path: '{{ item }}'
+        follow: true
+      loop: '{{ [tx_target] + (tx_parents | map("regex_replace", "^", tx_target + "/") | list) }}'
+      register: tx_parent_check
+      when: tx_action in ['preflight', 'install']
+
+    - name: Reject files or dangling symlinks used as parent directories
+      ansible.builtin.assert:
+        that: not item.stat.exists or (item.stat.isdir | default(false) and item.stat.writeable | default(false))
+        quiet: true
+        fail_msg: 'A managed parent is not a directory: {{ item.item }}'
+      loop: '{{ tx_parent_check.results | default([]) }}'
+      loop_control: {label: '{{ item.item }}'}
+      when: tx_action in ['preflight', 'install']
+
+    - name: Require an existing target directory
+      ansible.builtin.assert:
+        that: tx_parent_check.results[0].stat.isdir | default(false)
+        quiet: true
+        fail_msg: 'TARGET must be an existing directory.'
+      when: tx_action in ['preflight', 'install']
+
+    - name: Inspect parent symlinks without following them
+      ansible.builtin.stat:
+        get_checksum: false
+        get_mime: false
+        get_attributes: false
+        path: '{{ item.item }}'
+        follow: false
+      loop: '{{ tx_parent_check.results | default([]) }}'
+      loop_control: {label: '{{ item.item }}'}
+      register: tx_parent_links
+      when: tx_action in ['preflight', 'install']
+
+    - name: Reject dangling parent symlinks before any dependency installation
+      ansible.builtin.assert:
+        that: not item.stat.islnk | default(false) or item.item.stat.isdir | default(false)
+        quiet: true
+        fail_msg: 'Dangling or invalid parent symlink: {{ item.item.item }}'
+      loop: '{{ tx_parent_links.results | default([]) }}'
+      loop_control: {label: '{{ item.item.item }}'}
+      when: tx_action in ['preflight', 'install']
+
+    - name: Check Stow conflicts before installing dependencies
+      ansible.builtin.command:
+        argv: '{{ tx_stow + ["--simulate", "--stow", "--verbose=1", "configs"] }}'
+      register: tx_probe
+      changed_when: false
+      failed_when: tx_probe.rc != 0 and tx_policy == 'abort'
+      when: tx_action == 'preflight'
+
+    - name: Explain automatic conflict backup
+      ansible.builtin.debug:
+        msg: 'If activation is needed, existing selected config roots will be preserved in a private backup before replacement. Use CONFLICTS=abort to refuse conflicts.'
+      when: tx_action == 'preflight' and tx_probe.rc != 0
+
+    - name: Create private transaction storage
+      ansible.builtin.file:
+        path: '{{ tx_state }}'
+        state: directory
+        mode: '0700'
+      when: tx_action != 'preflight'
+
+    - name: Inspect transaction lock
+      ansible.builtin.stat:
+        get_checksum: false
+        get_mime: false
+        get_attributes: false
+        path: '{{ tx_state }}/lock'
+      register: tx_lock
+      when: tx_action != 'preflight'
+
+    - name: Inspect lock owner
+      ansible.builtin.stat:
+        get_checksum: false
+        get_mime: false
+        get_attributes: false
+        path: '{{ tx_state }}/lock/owner'
+      register: tx_owner_file
+      when: tx_action != 'preflight' and tx_lock.stat.exists
+
+    - name: Read lock owner PID
+      ansible.builtin.slurp:
+        src: '{{ tx_state }}/lock/owner'
+      register: tx_owner
+      when: tx_action != 'preflight' and tx_lock.stat.exists and tx_owner_file.stat.exists
+
+    - name: Check whether the lock owner is still running
+      ansible.builtin.command:
+        argv: [kill, '-0', '{{ tx_owner.content | b64decode | trim }}']
+      register: tx_owner_alive
+      failed_when: false
+      changed_when: false
+      when: tx_owner.content is defined
+
+    - name: Require explicit recovery of an abandoned lock
+      ansible.builtin.assert:
+        that:
+          - tx_action == 'recover'
+          - tx_owner_alive.rc | default(1) != 0
+        fail_msg: 'Another installer is running, or an interrupted run left a lock. When it has stopped, use make recover.'
+      when: tx_action != 'preflight' and tx_lock.stat.exists
+
+    - name: Remove abandoned lock for recovery
+      ansible.builtin.file:
+        path: '{{ tx_state }}/lock'
+        state: absent
+      when: tx_action == 'recover' and tx_lock.stat.exists
+
+    - name: Acquire an exclusive config transaction lock
+      ansible.builtin.command:
+        argv: [mkdir, '-m', '700', '{{ tx_state }}/lock']
+      when: tx_action != 'preflight'
+
+    - name: Run the transaction under the lock
+      when: tx_action != 'preflight'
+      block:
+        - name: Record the installer process
+          ansible.builtin.copy:
+            dest: '{{ tx_state }}/lock/owner'
+            content: '{{ dotfiles_owner_pid | default(0) }}'
+            mode: '0600'
+
+        - name: Inspect target binding for this transaction store
+          ansible.builtin.stat:
+            get_checksum: false
+            get_mime: false
+            get_attributes: false
+            path: '{{ tx_state }}/target'
+          register: tx_binding_file
+
+        - name: Read the bound target
+          ansible.builtin.slurp:
+            src: '{{ tx_state }}/target'
+          register: tx_binding
+          when: tx_binding_file.stat.exists
+
+        - name: Refuse to mix transaction histories of different targets
+          ansible.builtin.assert:
+            that: tx_binding.content | default(tx_target | b64encode) | b64decode == tx_target
+            quiet: true
+            fail_msg: 'Use a separate STATE_DIR for each TARGET.'
+
+        - name: Bind transaction history to this target
+          ansible.builtin.copy:
+            dest: '{{ tx_state }}/target'
+            content: '{{ tx_target }}'
+            mode: '0600'
+
+        - name: Inspect pending and committed checkpoints
+          ansible.builtin.stat:
+            get_checksum: false
+            get_mime: false
+            get_attributes: false
+            path: '{{ tx_state }}/{{ item }}'
+          loop: [pending, latest]
+          register: tx_pointers
+
+        - name: Read checkpoint pointers
+          ansible.builtin.slurp:
+            src: '{{ item.stat.path }}'
+          loop: '{{ tx_pointers.results }}'
+          when: item.stat.exists
+          register: tx_pointer_data
+
+        - name: Resolve checkpoint paths
+          ansible.builtin.set_fact:
+            tx_pending: '{{ tx_pointer_data.results[0].content | default("") | b64decode | trim }}'
+            tx_latest: '{{ tx_pointer_data.results[1].content | default("") | b64decode | trim }}'
+
+        - name: Require recovery before another installation or rollback
+          ansible.builtin.assert:
+            that: tx_pending | length == 0 or tx_action == 'recover'
+            fail_msg: 'An interrupted transaction is pending. Run make recover first.'
+
+        - name: Require an existing checkpoint for rollback
+          ansible.builtin.assert:
+            that: tx_latest | length > 0
+            fail_msg: 'No successful configuration transaction is available to roll back.'
+          when: tx_action == 'rollback'
+
+        - name: Read the checkpoint to restore
+          ansible.builtin.slurp:
+            src: '{{ tx_pending if tx_action == "recover" else tx_latest }}/manifest.json'
+          register: tx_saved_manifest
+          when: tx_action == 'rollback' or (tx_action == 'recover' and tx_pending | length > 0)
+
+        - name: Resolve the saved transaction
+          ansible.builtin.set_fact:
+            tx_record: '{{ tx_saved_manifest.content | b64decode | from_json }}'
+          when: tx_saved_manifest.content is defined
+
+        - name: Validate the saved target
+          ansible.builtin.assert:
+            that: tx_record.target == tx_target
+            fail_msg: 'The checkpoint belongs to another TARGET. Supply the original TARGET and STATE_DIR.'
+          when: tx_action in ['rollback', 'recover'] and tx_record is defined
+
+        - name: Restore configuration roots from the checkpoint
+          when: tx_action == 'rollback' or (tx_action == 'recover' and tx_record is defined and tx_record.status != 'committed')
+          block: &restore_config_transaction
+            - name: Inspect originals that were actually moved into the backup
+              ansible.builtin.stat:
+                get_checksum: false
+                get_mime: false
+                get_attributes: false
+                path: '{{ tx_record.directory }}/originals/{{ item.path }}'
+                follow: false
+              loop: '{{ tx_record.entries }}'
+              register: tx_originals
+
+            - name: Inspect currently deployed config roots
+              ansible.builtin.stat:
+                get_checksum: false
+                get_mime: false
+                get_attributes: false
+                path: '{{ tx_record.target }}/{{ item.path }}'
+                follow: false
+              loop: '{{ tx_record.entries }}'
+              register: tx_current
+
+            - name: Inspect displaced copies from an interrupted recovery
+              ansible.builtin.stat:
+                get_checksum: false
+                get_mime: false
+                get_attributes: false
+                path: '{{ tx_record.directory }}/displaced/{{ item.path }}'
+                follow: false
+              loop: '{{ tx_record.entries }}'
+              register: tx_displaced
+
+            - name: Refuse to overwrite a previous recovery copy
+              ansible.builtin.assert:
+                that: not tx_displaced.results[index].stat.exists
+                fail_msg: 'Both the target and a recovery copy exist for {{ item.path }}. Preserve and compare them before retrying recovery.'
+              loop: '{{ tx_record.entries }}'
+              loop_control: {index_var: index}
+              when: tx_current.results[index].stat.exists and (not item.existed or tx_originals.results[index].stat.exists)
+
+            - name: Preserve current configs before restoring originals
+              ansible.builtin.command:
+                argv: [mv, '{{ tx_record.target }}/{{ item.path }}', '{{ tx_record.directory }}/displaced/{{ item.path }}']
+              loop: '{{ tx_record.entries }}'
+              loop_control: {index_var: index}
+              when: tx_current.results[index].stat.exists and (not item.existed or tx_originals.results[index].stat.exists)
+
+            - name: Restore original files, directories and symlinks without dereferencing them
+              ansible.builtin.command:
+                argv: [mv, '-n', '{{ tx_record.directory }}/originals/{{ item.item.path }}', '{{ tx_record.target }}/{{ item.item.path }}']
+              loop: '{{ tx_originals.results }}'
+              when: item.stat.exists
+
+            - name: Verify that all saved originals have been restored
+              ansible.builtin.stat:
+                get_checksum: false
+                get_mime: false
+                get_attributes: false
+                path: '{{ tx_record.directory }}/originals/{{ item.path }}'
+                follow: false
+              loop: '{{ tx_record.entries }}'
+              register: tx_remaining
+
+            - name: Refuse to mark an incomplete restoration as successful
+              ansible.builtin.assert:
+                that: not item.stat.exists
+              loop: '{{ tx_remaining.results }}'
+
+            - name: Restore the previous Hammerspoon config preference
+              ansible.builtin.command:
+                argv: '{{ ["defaults", "write", "org.hammerspoon.Hammerspoon", "MJConfigFile", tx_record.hammerspoon.value] if tx_record.hammerspoon.exists else ["defaults", "delete", "org.hammerspoon.Hammerspoon", "MJConfigFile"] }}'
+              register: tx_preference_restore
+              failed_when: tx_preference_restore.rc != 0 and tx_record.hammerspoon.exists
+              when: tx_record.hammerspoon is not none
+
+            - name: Remove newly created parent directories only if empty
+              ansible.builtin.command:
+                argv: [rmdir, '{{ tx_record.target }}/{{ item.path }}']
+              loop: '{{ tx_record.parents | reverse | list }}'
+              when: not item.existed
+              failed_when: false
+
+            - name: Mark the checkpoint as restored
+              ansible.builtin.copy:
+                dest: '{{ tx_record.directory }}/manifest.json'
+                content: '{{ tx_record | combine({"status": "rolled_back"}) | to_nice_json }}'
+                mode: '0600'
+
+            - name: Restore the previous successful checkpoint pointer
+              ansible.builtin.copy:
+                dest: '{{ tx_state }}/latest'
+                content: '{{ tx_record.previous }}'
+                mode: '0600'
+              when: tx_record.previous | length > 0
+
+            - name: Clear the checkpoint pointer if this was the first installation
+              ansible.builtin.file:
+                path: '{{ tx_state }}/latest'
+                state: absent
+              when: tx_record.previous | length == 0
+
+            - name: Clear the pending transaction marker
+              ansible.builtin.file:
+                path: '{{ tx_state }}/pending'
+                state: absent
+
+        - name: Finish bookkeeping if interruption happened after commit
+          ansible.builtin.copy:
+            dest: '{{ tx_state }}/latest'
+            content: '{{ tx_record.directory }}'
+            mode: '0600'
+          when: tx_action == 'recover' and tx_record is defined and tx_record.status == 'committed'
+
+        - name: Clear a committed transaction's pending marker
+          ansible.builtin.file:
+            path: '{{ tx_state }}/pending'
+            state: absent
+          when: tx_action == 'recover' and tx_record is defined and tx_record.status == 'committed'
+
+        - name: Prepare and activate a new configuration release
+          when: tx_action == 'install'
+          block:
+            - name: Create a private checkpoint directory
+              ansible.builtin.tempfile:
+                state: directory
+                path: '{{ tx_state }}'
+                prefix: transaction-
+              register: tx_new
+
+            - name: Create staging and release directories
+              ansible.builtin.file:
+                path: '{{ tx_new.path }}/{{ item }}'
+                state: directory
+                mode: '0700'
+              loop: [stage, source/configs, originals, displaced]
+
+            - name: Ask Stow to select the exact non-secret payload in staging
+              ansible.builtin.command:
+                argv: [stow, '--dir', '{{ tx_root }}', '--target', '{{ tx_new.path }}/stage', '--no-folding', '--ignore={{ tx_pattern }}', '--stow', configs]
+
+            - name: Freeze the selected payload so future Git pulls cannot change the active release
+              ansible.builtin.command:
+                argv: [cp, '-RLp', '{{ tx_new.path }}/stage/.', '{{ tx_new.path }}/source/configs/']
+
+            - name: Compare the candidate with the previous successful release
+              ansible.builtin.command:
+                argv: [diff, '-qr', '{{ tx_latest }}/source/configs', '{{ tx_new.path }}/source/configs']
+              register: tx_diff
+              changed_when: false
+              failed_when: tx_diff.rc not in [0, 1, 2]
+              when: tx_latest | length > 0
+
+            - name: Inspect links of an unchanged release
+              ansible.builtin.command:
+                argv: [stow, '--dir', '{{ tx_latest }}/source', '--target', '{{ tx_target }}', '--no-folding', '--simulate', '--verbose=1', '--stow', configs]
+              register: tx_same_links
+              failed_when: false
+              changed_when: false
+              when: tx_latest | length > 0 and tx_diff.rc == 0
+
+            - name: Compare executable bits and other payload permissions
+              ansible.builtin.find:
+                paths: '{{ item }}/source/configs'
+                recurse: true
+                hidden: true
+                file_type: any
+              loop: '{{ [tx_new.path, tx_latest] }}'
+              register: tx_mode_inventory
+              when: tx_latest | length > 0
+
+            - name: Resolve permission equality for otherwise identical payloads
+              ansible.builtin.set_fact:
+                tx_permissions_same: '{{ (tx_mode_inventory.results[0].files | sort(attribute="path") | map(attribute="mode") | list) == (tx_mode_inventory.results[1].files | sort(attribute="path") | map(attribute="mode") | list) }}'
+              when: tx_latest | length > 0
+
+            - name: Read the previous Hammerspoon config preference
+              ansible.builtin.command: defaults read org.hammerspoon.Hammerspoon MJConfigFile
+              register: tx_hammerspoon
+              changed_when: false
+              failed_when: false
+              when: "'hammerspoon' in tx_configs"
+
+            - name: Inspect the generated Swipe LaunchAgent
+              ansible.builtin.stat:
+                get_checksum: false
+                get_mime: false
+                get_attributes: false
+                path: '{{ tx_target }}/Library/LaunchAgents/com.acsandmann.swipe.plist'
+                follow: false
+              register: tx_swipe_agent
+              when: "'aerospace-swipe' in tx_configs"
+
+            - name: Check generated Swipe configuration without writing it
+              ansible.builtin.copy: *swipe_agent_copy
+              check_mode: true
+              register: tx_swipe_drift
+              when: "'aerospace-swipe' in tx_configs and tx_swipe_agent.stat.exists"
+
+            - name: Decide whether a configuration activation is necessary
+              ansible.builtin.set_fact:
+                tx_change: '{{ tx_latest | length == 0 or tx_diff.rc | default(1) != 0 or not tx_permissions_same | default(false) or tx_same_links.rc | default(1) != 0 or "LINK:" in tx_same_links.stderr | default("") or "MKDIR:" in tx_same_links.stderr | default("") or ("hammerspoon" in tx_configs and (tx_hammerspoon.rc != 0 or tx_hammerspoon.stdout != tx_target + "/.config/hammerspoon/init.lua")) or ("aerospace-swipe" in tx_configs and (not tx_swipe_agent.stat.exists or tx_swipe_drift.changed | default(false))) }}'
+
+            - name: Inspect original managed roots
+              ansible.builtin.stat:
+                get_checksum: false
+                get_mime: false
+                get_attributes: false
+                path: '{{ tx_target }}/{{ item }}'
+                follow: false
+              loop: '{{ tx_paths }}'
+              register: tx_before
+              when: tx_change
+
+            - name: Initialize the checkpoint manifest
+              ansible.builtin.set_fact:
+                tx_record:
+                  directory: '{{ tx_new.path }}'
+                  target: '{{ tx_target }}'
+                  previous: '{{ tx_latest }}'
+                  status: pending
+                  entries: []
+                  parents: []
+                  hammerspoon: '{{ {"exists": tx_hammerspoon.rc | default(1) == 0, "value": tx_hammerspoon.stdout | default("")} if "hammerspoon" in tx_configs else none }}'
+
+            - name: Record original root existence, including dangling symlinks
+              ansible.builtin.set_fact:
+                tx_record: '{{ tx_record | combine({"entries": tx_record.entries + [{"path": item.item, "existed": item.stat.exists}]}) }}'
+              loop: '{{ tx_before.results }}'
+              when: tx_change
+
+            - name: Record parent directory existence
+              ansible.builtin.set_fact:
+                tx_record: '{{ tx_record | combine({"parents": tx_record.parents + [{"path": item.item | relpath(tx_target), "existed": item.stat.exists}]}) }}'
+              loop: '{{ tx_parent_check.results }}'
+              when: tx_change and item.item != tx_target
+
+            - name: Prepare backup and recovery parent directories
+              ansible.builtin.file:
+                path: '{{ tx_new.path }}/{{ item.0 }}/{{ item.1 | dirname }}'
+                state: directory
+                mode: '0700'
+              loop: '{{ ["originals", "displaced"] | product(tx_paths) | list }}'
+              when: tx_change
+
+            - name: Save the checkpoint manifest before modifying any config
+              ansible.builtin.copy:
+                dest: '{{ tx_new.path }}/manifest.json'
+                content: '{{ tx_record | to_nice_json }}'
+                mode: '0600'
+              when: tx_change
+
+            - name: Publish the pending transaction before modifying any config
+              ansible.builtin.copy:
+                dest: '{{ tx_state }}/pending'
+                content: '{{ tx_new.path }}'
+                mode: '0600'
+              when: tx_change
+
+            - name: Remember that restoration is now required on failure
+              ansible.builtin.set_fact:
+                tx_pending_written: true
+              when: tx_change
+
+            - name: Move original config roots into the private backup
+              ansible.builtin.command:
+                argv: [mv, '{{ tx_target }}/{{ item.path }}', '{{ tx_new.path }}/originals/{{ item.path }}']
+              loop: '{{ tx_record.entries }}'
+              when: tx_change and item.existed
+
+            - name: Create target parents for Stow and generated config
+              ansible.builtin.command:
+                argv: [mkdir, '-p', '{{ tx_target }}/{{ item | dirname }}']
+              loop: '{{ tx_paths }}'
+              when: tx_change
+
+            - name: Activate all selected configs with a single Stow invocation
+              ansible.builtin.command:
+                argv: [stow, '--dir', '{{ tx_new.path }}/source', '--target', '{{ tx_target }}', '--no-folding', '--stow', configs]
+              when: tx_change
+
+            - name: Initialize plugins and generated configs before committing
+              ansible.builtin.command:
+                argv: [make, '--no-print-directory', '-C', '{{ tx_root }}', initialize, 'SELECTED={{ (tx_configs if tx_change else tx_configs | difference(["hammerspoon", "aerospace-swipe"])) | join(" ") }}']
+
+            - name: Commit the successful configuration checkpoint
+              ansible.builtin.copy:
+                dest: '{{ tx_new.path }}/manifest.json'
+                content: '{{ tx_record | combine({"status": "committed"}) | to_nice_json }}'
+                mode: '0600'
+              when: tx_change
+
+            - name: Publish the successful checkpoint
+              ansible.builtin.copy:
+                dest: '{{ tx_state }}/latest'
+                content: '{{ tx_new.path }}'
+                mode: '0600'
+              when: tx_change
+
+            - name: Clear the pending marker after commit
+              ansible.builtin.file:
+                path: '{{ tx_state }}/pending'
+                state: absent
+              when: tx_change
+
+            - name: Discard an unchanged candidate without creating a new checkpoint
+              ansible.builtin.file:
+                path: '{{ tx_new.path }}'
+                state: absent
+              when: not tx_change
+
+            - name: Report configuration activation
+              ansible.builtin.debug:
+                msg: '{{ "Configuration transaction committed. Undo with make rollback." if tx_change else "Configs are already installed; checkpoint and links are unchanged." }}'
+
+          rescue:
+            - name: Restore originals after a failed activation
+              when: tx_pending_written | default(false)
+              block: *restore_config_transaction
+
+            - name: Remove a failed candidate if no config changes had started
+              ansible.builtin.file:
+                path: '{{ tx_new.path }}'
+                state: absent
+              when: tx_new.path is defined and not tx_pending_written | default(false)
+
+            - name: Report installation failure after restoration
+              ansible.builtin.fail:
+                msg: 'Configuration activation failed in {{ ansible_failed_task.name }}. Originals were restored when a checkpoint had been published. System packages and plugin downloads remain installed. Check {{ tx_state }}; use make recover if a pending marker remains.'
+
+      always:
+        - name: Release the config transaction lock
+          ansible.builtin.file:
+            path: '{{ tx_state }}/lock'
+            state: absent
