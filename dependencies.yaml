@@ -39,6 +39,8 @@
         casks: [nikitabobko/tap/aerospace]
       hammerspoon:
         casks: [hammerspoon, zen]
+      iterm2:
+        casks: [iterm2, font-hack-nerd-font]
       sketchybar:
         brew: [FelixKratz/formulae/sketchybar, FelixKratz/formulae/borders]
         casks: [nikitabobko/tap/aerospace, font-hack-nerd-font]
@@ -394,7 +396,8 @@
     tx_state: '{{ lookup("ansible.builtin.env", "DOTFILES_STATE_DIR") | default(lookup("ansible.builtin.env", "HOME") + "/.local/state/dotfiles", true) }}'
     tx_configs: '{{ dotfiles_configs | default([]) }}'
     tx_payload: '{{ dotfiles_paths | default([]) }}'
-    tx_paths: '{{ tx_payload + (["Library/LaunchAgents/com.acsandmann.swipe.plist"] if "aerospace-swipe" in tx_configs else []) }}'
+    tx_paths: '{{ tx_payload + (["Library/LaunchAgents/com.acsandmann.swipe.plist"] if "aerospace-swipe" in tx_configs else []) + ([tx_iterm_profile] if "iterm2" in tx_configs else []) }}'
+    tx_iterm_profile: Library/Application Support/iTerm2/DynamicProfiles/dotfiles.json
     tx_parents: >-
       {%- set ns = namespace(paths=[]) -%}
       {%- for path in tx_paths -%}
@@ -488,6 +491,26 @@
       changed_when: false
       failed_when: tx_probe.rc != 0 and tx_policy == 'abort'
       when: tx_action == 'preflight'
+
+    - name: Inspect the generated iTerm2 profile before installing dependencies
+      ansible.builtin.stat:
+        path: '{{ tx_target }}/{{ tx_iterm_profile }}'
+        follow: false
+        get_checksum: false
+        get_mime: false
+        get_attributes: false
+      register: tx_iterm_before
+      when: tx_action == 'preflight' and 'iterm2' in tx_configs and tx_policy == 'abort'
+
+    - name: Refuse to replace a foreign iTerm2 profile under the abort policy
+      ansible.builtin.assert:
+        that: >-
+          not tx_iterm_before.stat.exists or
+          (tx_iterm_before.stat.islnk | default(false) and
+          (tx_iterm_before.stat.lnk_source | realpath).startswith((tx_state | realpath) + '/') and
+          tx_iterm_before.stat.lnk_source.endswith('/source/configs/' + tx_iterm_profile))
+        fail_msg: 'An iTerm2 profile already exists at {{ tx_target }}/{{ tx_iterm_profile }}. Use CONFLICTS=backup to preserve and replace it.'
+      when: tx_action == 'preflight' and 'iterm2' in tx_configs and tx_policy == 'abort'
 
     - name: Explain automatic conflict backup
       ansible.builtin.debug:
@@ -780,6 +803,23 @@
             - name: Freeze the selected payload so future Git pulls cannot change the active release
               ansible.builtin.command:
                 argv: [cp, '-RLp', '{{ tx_new.path }}/stage/.', '{{ tx_new.path }}/source/configs/']
+
+            # Keep the source under .config for Make's package discovery. Add
+            # iTerm2's native path to the release so Stow, drift checks and
+            # rollback manage just our file, preserving other dynamic profiles.
+            - name: Create the iTerm2 dynamic profile directory in the release
+              ansible.builtin.file:
+                path: '{{ tx_new.path }}/source/configs/{{ tx_iterm_profile | dirname }}'
+                state: directory
+                mode: '0755'
+              when: "'iterm2' in tx_configs"
+
+            - name: Publish the iTerm2 profile in the frozen release
+              ansible.builtin.copy:
+                src: '{{ tx_new.path }}/source/configs/.config/iterm2/profile.json'
+                dest: '{{ tx_new.path }}/source/configs/{{ tx_iterm_profile }}'
+                mode: '0644'
+              when: "'iterm2' in tx_configs"
 
             - name: Detect the built-in display's notch for AeroSpace
               ansible.builtin.command:

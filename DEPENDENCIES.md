@@ -152,7 +152,7 @@ completion, widgets и первый prompt. Проверены функции, a
 # Аудит desktop-конфигов и зависимостей
 
 Проверены все исходные файлы пакетов `aerospace`, `aerospace-swipe`, `btop`,
-`hammerspoon`, `opencode`, `sketchybar`, включая скрытые служебные файлы,
+`hammerspoon`, `iterm2`, `opencode`, `sketchybar`, включая скрытые служебные файлы,
 backup и сгенерированное состояние. Ниже пути внутри конфига каждого пакета;
 Stow размещает их в `~/.config/<package>/`.
 
@@ -164,19 +164,21 @@ Stow размещает их в `~/.config/<package>/`.
 | `aerospace-swipe` | AeroSpace; сборка upstream-приложения `AerospaceSwipe.app`, создание LaunchAgent | Пропускается | `make start-aerospace-swipe`, разрешить Accessibility; отключить конфликтующие жесты macOS |
 | `btop` | `btop` | `btop` | Нет; тема поставляется вместе с btop |
 | `hammerspoon` | Hammerspoon, Zen Browser | Пропускается | `make start-hammerspoon`, разрешить Accessibility |
+| `iterm2` | iTerm2, Hack Nerd Font; профиль `Dotfiles`: окно без шапки, прозрачность/размытие, светлая/тёмная палитра | Пропускается | Один раз выбрать `Dotfiles` как профиль по умолчанию и открыть новое окно |
 | `opencode` | `opencode` | `opencode`, `wl-clipboard`, `xclip` | Предоставить `ELIZA_TOKEN` и доступ к настроенным внутренним провайдерам |
 | `sketchybar` | SketchyBar, JankyBorders, AeroSpace, Hack Nerd Font; локальная сборка helper | Пропускается | `make start-sketchybar`; включить «Displays have separate Spaces» |
 
 На macOS предполагается установленный Homebrew. Для нативных сборок нужны
 Xcode Command Line Tools: bootstrap проверяет доступность `clang` и SDK.
 Системный Bash 3.2 достаточен для shell-кода этих пакетов. Ни Python,
-ни отдельный Lua/LuaRocks, ни Rust не требуются этим шести конфигам.
+ни отдельный Lua/LuaRocks, ни Rust не требуются этим семи конфигам.
 
 Установка не запускает UI-приложения или сервисы. `make start-*` делает это
 явно. Уже включённый в AeroSpace `start-at-login = true` сохраняется;
 JankyBorders запускается из его `after-startup-command`, поэтому отдельный
-сервис borders не нужен. Устанавливаемые шрифты нужно отдельно выбрать в
-настройках терминала; SketchyBar выбирает Hack Nerd Font своим конфигом.
+сервис borders не нужен. Профиль iTerm2 `Dotfiles` выбирает Hack Nerd Font;
+после установки его нужно один раз сделать профилем по умолчанию в iTerm2.
+В других терминалах шрифт выбирается вручную. SketchyBar выбирает Hack Nerd Font своим конфигом.
 
 ## Покрытие каждого файла
 

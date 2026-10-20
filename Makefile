@@ -21,7 +21,7 @@ ifneq ($(DOTFILES_PLATFORM),)
 PLATFORM := $(DOTFILES_PLATFORM)
 endif
 endif
-MACOS_ONLY := aerospace aerospace-swipe hammerspoon sketchybar
+MACOS_ONLY := aerospace aerospace-swipe hammerspoon iterm2 sketchybar
 ACTIVE := $(if $(filter macos,$(PLATFORM)),$(PACKAGES),$(filter-out $(MACOS_ONLY),$(PACKAGES)))
 SELECTED ?= $(ACTIVE)
 STATE_DIR ?= $(if $(XDG_STATE_HOME),$(XDG_STATE_HOME),$(HOME)/.local/state)/dotfiles
@@ -49,8 +49,8 @@ PLAYBOOK = ansible-playbook -i localhost, -c local "$(ROOT)/dependencies.yaml" $
 POST_INSTALL_hammerspoon = defaults write org.hammerspoon.Hammerspoon MJConfigFile "$(TARGET)/.config/hammerspoon/init.lua"
 POST_INSTALL_aerospace-swipe = $(PLAYBOOK) --tags activation
 TRANSACTION = $(PLAYBOOK) --tags transaction --extra-vars '{dotfiles_paths: [$(subst $(space),$(comma),$(strip $(call paths_for,$(SELECTED))))], dotfiles_configs: [$(subst $(space),$(comma),$(SELECTED))]}' --extra-vars "dotfiles_owner_pid=$$$$"
-companions_aerospace := sketchybar
-companions_aerospace-swipe := aerospace sketchybar
+companions_aerospace := iterm2 sketchybar
+companions_aerospace-swipe := aerospace iterm2 sketchybar
 selection_for = $(sort $(1) $(companions_$(1)))
 
 .DEFAULT_GOAL := help
@@ -135,6 +135,7 @@ plan:
 	@$(call stow_for,$(SELECTED),restow) --verbose=1 || { \
 	  if [ '$(CONFLICTS)' = backup ]; then printf '%s\n' 'When activation is needed, install backs up selected config roots before replacing them.'; else exit 1; fi; }
 	@printf '\nInitialization after linking: %s\n' '$(strip $(foreach config,$(SELECTED),$(if $(POST_INSTALL_$(config)),$(config))))'
+	@$(if $(filter iterm2,$(SELECTED)),printf '%s\n' 'The transaction also publishes the Dotfiles profile at $(TARGET)/Library/Application Support/iTerm2/DynamicProfiles/dotfiles.json. Select Dotfiles as the default profile in iTerm2 Settings.',:)
 
 # These configs use each other's programs and settings. Make orders them.
 deps-aerospace: deps-sketchybar
@@ -165,6 +166,9 @@ start-aerospace:
 start-hammerspoon:
 	@$(call check_supported,hammerspoon)
 	@$(RUN) open -a Hammerspoon
+start-iterm2:
+	@$(call check_supported,iterm2)
+	@$(RUN) open -a iTerm
 start-sketchybar:
 	@$(call check_supported,sketchybar)
 	@$(RUN) brew services start FelixKratz/formulae/sketchybar

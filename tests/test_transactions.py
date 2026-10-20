@@ -142,6 +142,69 @@ class Transactions(unittest.TestCase):
         self.assertFalse((self.state / "latest").exists())
         self.assert_unlocked()
 
+    def test_iterm_profile_is_frozen_idempotent_and_restorable(self):
+        payload = self.repo / "configs/.config/iterm2"
+        shutil.copytree(ROOT / "configs/.config/iterm2", payload)
+        profile = self.home / "Library/Application Support/iTerm2/DynamicProfiles/dotfiles.json"
+        profile.parent.mkdir(parents=True)
+        profile.write_text("original profile\n")
+        unrelated = profile.with_name("personal.json")
+        unrelated.write_text('{"Profiles": []}\n')
+        extra = {"dotfiles_paths": [".config/iterm2"], "dotfiles_configs": ["iterm2"]}
+        self.action("preflight", fail=True, extra=extra, env={"DOTFILES_CONFLICTS": "abort"})
+        self.assertEqual(profile.read_text(), "original profile\n")
+        self.assertFalse(self.state.exists())
+        self.action("install", extra=extra)
+        first = self.latest()
+        expected = json.loads((payload / "profile.json").read_text())
+        self.assertTrue(profile.is_symlink())
+        self.assertEqual(json.loads(profile.read_text()), expected)
+        self.assertEqual(expected["Profiles"][0]["Normal Font"], "HackNF-Regular 16")
+        self.assertFalse(expected["Profiles"][0]["Use Non-ASCII Font"])
+        self.assertEqual(expected["Profiles"][0]["Window Type"], 12)
+        self.assertAlmostEqual(expected["Profiles"][0]["Transparency"], 0.09654809397163121)
+        self.assertTrue(expected["Profiles"][0]["Blur"])
+        self.assertTrue(expected["Profiles"][0]["Use Separate Colors for Light and Dark Mode"])
+        for mode in ("Light", "Dark"):
+            for name in ["Background", "Foreground"] + [f"Ansi {i}" for i in range(16)]:
+                self.assertIn(f"{name} Color ({mode})", expected["Profiles"][0])
+        self.action("install", extra=extra)
+        self.assertEqual(self.latest(), first)
+
+        updated = json.loads(json.dumps(expected))
+        updated["Profiles"][0]["Normal Font"] = "HackNF-Regular 18"
+        (payload / "profile.json").write_text(json.dumps(updated))
+        self.assertEqual(json.loads(profile.read_text()), expected)
+        self.action("install", fail=True, extra=extra, env={"POST_INSTALL_iterm2": "false"})
+        self.assertEqual(self.latest(), first)
+        self.assertEqual(json.loads(profile.read_text()), expected)
+        self.assert_unlocked()
+
+        self.action("install", extra=extra)
+        self.assertEqual(json.loads(profile.read_text()), updated)
+        self.action("rollback", extra=extra)
+        self.assertEqual(json.loads(profile.read_text()), expected)
+        self.action("rollback", extra=extra)
+        self.assertEqual(profile.read_text(), "original profile\n")
+        self.assertEqual(unrelated.read_text(), '{"Profiles": []}\n')
+        self.assertFalse((self.home / ".config/iterm2").exists())
+        self.assert_unlocked()
+
+    def test_iterm_missing_link_is_repaired_and_arch_excludes_it(self):
+        shutil.copytree(ROOT / "configs/.config/iterm2", self.repo / "configs/.config/iterm2")
+        extra = {"dotfiles_paths": [".config/iterm2"], "dotfiles_configs": ["iterm2"]}
+        self.action("install", extra=extra)
+        profile = self.home / "Library/Application Support/iTerm2/DynamicProfiles/dotfiles.json"
+        profile.unlink()
+        self.action("install", extra=extra)
+        self.assertTrue(profile.is_symlink())
+        self.command(["make", "install-iterm2", "DRY_RUN=1", "DOTFILES_PLATFORM=arch"], fail=True)
+        self.assertNotIn("iterm2", self.command(["make", "list", "DRY_RUN=1", "DOTFILES_PLATFORM=arch"]))
+        self.action("rollback", extra=extra)
+        self.action("rollback", extra=extra)
+        self.assertFalse((self.home / "Library").exists())
+        self.assert_unlocked()
+
     def test_empty_home_failure_and_parent_conflicts(self):
         self.action("install", fail=True, env={"POST_INSTALL_demo": "false"})
         self.assertEqual(list(self.home.iterdir()), [])
