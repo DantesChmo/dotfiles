@@ -66,7 +66,7 @@ help:
 	  'make install[-<name>]  Install dependencies, Stow links and plugins' \
 	  'make deps[-<name>]     Install missing dependencies only' \
 	  'make stow              Install GNU Stow if missing' \
-	  'make sync              Repeat the transactional installation' \
+	  'make sync              Create/repair repository links and initialize configs' \
 	  'make link[-<name>]     Raw Stow links from the working copy (no history)' \
 	  'make unlink[-<name>]   Run stow --delete' \
 	  'make plan              Preview dependencies, Ansible steps and Stow changes' \

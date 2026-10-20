@@ -63,39 +63,23 @@ class Transactions(unittest.TestCase):
         self.assertFalse((self.state / "pending").exists())
         self.assertFalse((self.state / "lock").exists())
 
-    def test_aerospace_display_gap_is_frozen_and_idempotent(self):
-        import tomllib
-
+    def test_aerospace_links_to_repository_without_rewriting_config(self):
         payload = self.repo / "configs/.config/aerospace"
         payload.mkdir()
         source = payload / "aerospace.toml"
         shutil.copy(ROOT / "configs/.config/aerospace/aerospace.toml", source)
         original = source.read_text()
-        mock_bin = self.base / "bin"
-        mock_bin.mkdir()
-        probe = mock_bin / "osascript"
-        probe.write_text('#!/bin/sh\ncat >/dev/null\nprintf "%s\\n" "$DOTFILES_TEST_TOP_GAP"\n')
-        probe.chmod(0o755)
         extra = {"dotfiles_paths": [".config/aerospace"], "dotfiles_configs": ["aerospace"]}
-        for gap in ("44", "12"):
-            env = {"PATH": str(mock_bin) + os.pathsep + self.env["PATH"],
-                   "DOTFILES_TEST_TOP_GAP": gap}
-            self.action("install", env=env, extra=extra)
-            release = self.latest()
-            active = self.home / ".config/aerospace/aerospace.toml"
-            config = tomllib.loads(active.read_text())
-            self.assertEqual(config["gaps"]["outer"]["top"],
-                             [{"monitor": {"built-in": int(gap)}}, 42])
-            self.assertEqual(source.read_text(), original)
-            self.action("install", env=env, extra=extra)
-            self.assertEqual(self.latest(), release)
-            self.assert_unlocked()
-        self.action("install", fail=True, extra=extra,
-                    env={"PATH": str(mock_bin) + os.pathsep + self.env["PATH"],
-                         "DOTFILES_TEST_TOP_GAP": "invalid"})
-        self.assertEqual(self.latest(), release)
-        self.assertEqual(tomllib.loads(active.read_text())["gaps"]["outer"]["top"][0],
-                         {"monitor": {"built-in": 12}})
+        self.action("install", extra=extra)
+        checkpoint = self.latest()
+        active = self.home / ".config/aerospace/aerospace.toml"
+        self.assertEqual(active.resolve(), source.resolve())
+        self.assertEqual(source.read_text(), original)
+        self.action("install", extra=extra)
+        self.assertEqual(self.latest(), checkpoint)
+        source.write_text(original + "\n# updated configuration\n")
+        self.assertEqual(active.read_text(), source.read_text())
+        self.assertEqual((checkpoint / "source/configs/.config/aerospace/aerospace.toml").read_text(), original)
         self.assert_unlocked()
 
     def test_one_command_versions_idempotence_failure_and_rollback(self):
@@ -108,6 +92,7 @@ class Transactions(unittest.TestCase):
         self.command(["make", "install"])
         first = self.latest()
         first_link = (old / "init.conf").readlink()
+        self.assertEqual((old / "init.conf").resolve(), self.source.resolve())
         self.assertEqual((old / "init.conf").read_text(), "version one\n")
         self.assertFalse((old / ".env").exists())
         self.assertTrue((first / "originals/.demorc").is_symlink())
@@ -121,9 +106,10 @@ class Transactions(unittest.TestCase):
         self.assertEqual(len(list(self.state.glob("transaction-*"))), count)
 
         self.source.write_text("version two\n")
-        self.assertEqual((old / "init.conf").read_text(), "version one\n")
+        self.assertEqual((old / "init.conf").read_text(), "version two\n")
         self.action("install", fail=True, env={"POST_INSTALL_demo": "false"})
-        self.assertEqual((old / "init.conf").read_text(), "version one\n")
+        self.assertEqual((old / "init.conf").read_text(), "version two\n")
+        self.assertEqual((old / "init.conf").resolve(), self.source.resolve())
         self.assertEqual(self.latest(), first)
         self.assert_unlocked()
 
@@ -133,13 +119,51 @@ class Transactions(unittest.TestCase):
         self.assertEqual((old / "init.conf").read_text(), "version two\n")
         (old / "local-note").write_text("keep later edits\n")
         self.command(["make", "rollback"])
-        self.assertEqual((old / "init.conf").read_text(), "version one\n")
+        self.assertEqual((old / "init.conf").resolve(), self.source.resolve())
+        self.assertEqual((old / "init.conf").read_text(), "version two\n")
         self.assertEqual((second / "displaced/.config/demo/local-note").read_text(), "keep later edits\n")
         self.command(["make", "rollback"])
         self.assertEqual((old / "original").read_text(), "preserve me\n")
         self.assertEqual((self.home / ".demorc").readlink(), Path("missing-original"))
         self.assertEqual((self.home / ".config/unrelated").read_text(), "keep\n")
         self.assertFalse((self.state / "latest").exists())
+        self.assert_unlocked()
+
+    def test_sync_migrates_snapshot_links_and_links_new_files_without_touching_other_configs(self):
+        self.action("install", extra={"dotfiles_paths": [".config/demo"], "dotfiles_configs": ["demo"]})
+        first = self.latest()
+        active = self.home / ".config/demo/init.conf"
+        archive = first / "source/configs/.config/demo/init.conf"
+        active.unlink()
+        active.symlink_to(archive)
+        (self.home / ".demorc").symlink_to(self.repo / "configs/.demorc")
+        root_link = (self.home / ".demorc").readlink()
+
+        self.action("install", fail=True, env={"POST_INSTALL_demo": "false"},
+                    extra={"dotfiles_paths": [".config/demo"], "dotfiles_configs": ["demo"]})
+        self.assertEqual(self.latest(), first)
+        self.assertEqual(active.resolve(), archive.resolve())
+        self.assert_unlocked()
+
+        # An old installer used exactly these snapshot links. Even with an
+        # identical payload, sync must migrate them to the repository.
+        self.command(["make", "sync", "SELECTED=demo"])
+        migrated = self.latest()
+        self.assertNotEqual(migrated, first)
+        self.assertEqual(active.resolve(), self.source.resolve())
+        self.assertEqual((self.home / ".demorc").readlink(), root_link)
+        self.assertFalse((self.home / ".config/demo/.env").exists())
+        self.source.write_text("live repository edit\n")
+        self.assertEqual(active.read_text(), "live repository edit\n")
+        self.assertEqual(archive.read_text(), "version one\n")
+
+        added = self.payload / "new.conf"
+        added.write_text("new config file\n")
+        self.command(["make", "sync", "SELECTED=demo"])
+        self.assertEqual((self.home / ".config/demo/new.conf").resolve(), added.resolve())
+        checkpoint = self.latest()
+        self.command(["make", "sync", "SELECTED=demo", "CONFLICTS=abort"])
+        self.assertEqual(self.latest(), checkpoint)
         self.assert_unlocked()
 
     def setup_iterm(self):
@@ -206,7 +230,7 @@ class Transactions(unittest.TestCase):
         updated = plistlib.loads(source.read_bytes())
         updated["New Bookmarks"][0]["Normal Font"] = "HackNF-Regular 18"
         source.write_bytes(plistlib.dumps(updated))
-        self.assertEqual(plistlib.loads(active.read_bytes()), expected)
+        self.assertEqual(plistlib.loads(active.read_bytes()), updated)
         # Change one loader key, then fail after that write: rescue must restore it.
         fail_command = 'defaults write com.googlecode.iterm2 PrefsCustomFolder -string broken && false'
         makefile = self.repo / "Makefile"
@@ -216,13 +240,14 @@ class Transactions(unittest.TestCase):
         makefile.write_text(original_makefile)
         self.assertEqual(self.latest(), first)
         self.assertEqual(json.loads(prefs.read_text())["PrefsCustomFolder"], str(self.home / ".config/iterm2"))
-        self.assertEqual(plistlib.loads(active.read_bytes()), expected)
+        self.assertEqual(plistlib.loads(active.read_bytes()), updated)
         self.assert_unlocked()
 
         self.action("install", extra=extra)
         self.assertEqual(plistlib.loads(active.read_bytes()), updated)
         self.action("rollback", extra=extra)
-        self.assertEqual(plistlib.loads(active.read_bytes()), expected)
+        self.assertEqual(active.resolve(), source.resolve())
+        self.assertEqual(plistlib.loads(active.read_bytes()), updated)
         self.action("rollback", extra=extra)
         self.assertEqual(legacy.read_text(), "original dynamic profile\n")
         self.assertEqual(unrelated.read_text(), '{"Profiles": []}\n')
@@ -291,7 +316,7 @@ class Transactions(unittest.TestCase):
         self.assertEqual(list(self.home.iterdir()), [self.home / ".demorc"])
         self.assertFalse(self.state.exists())
 
-    def test_permission_only_changes_create_a_restorable_release(self):
+    def test_repository_permissions_are_live_and_archived_without_rewriting_source(self):
         self.source.chmod(0o644)
         self.action("install")
         first = self.latest()
@@ -301,7 +326,9 @@ class Transactions(unittest.TestCase):
         active = self.home / ".config/demo/init.conf"
         self.assertEqual(active.stat().st_mode & 0o777, 0o755)
         self.action("rollback")
-        self.assertEqual(active.stat().st_mode & 0o777, 0o644)
+        self.assertEqual(active.resolve(), self.source.resolve())
+        self.assertEqual(active.stat().st_mode & 0o777, 0o755)
+        self.assertEqual((first / "source/configs/.config/demo/init.conf").stat().st_mode & 0o777, 0o644)
 
     @unittest.skipUnless(os.uname().sysname == "Darwin", "macOS-specific generated config")
     def test_generated_desktop_config_drift_and_preference_rollback(self):
@@ -374,7 +401,8 @@ class Transactions(unittest.TestCase):
         (self.state / "lock/owner").write_text("2147483647")
         self.action("recover")
         self.assertEqual(self.latest(), first)
-        self.assertEqual((self.home / ".config/demo/init.conf").read_text(), "version one\n")
+        self.assertEqual((self.home / ".config/demo/init.conf").resolve(), self.source.resolve())
+        self.assertEqual((self.home / ".config/demo/init.conf").read_text(), "version two\n")
         self.assert_unlocked()
         self.action("recover")
         self.assertEqual(self.latest(), first)

@@ -381,8 +381,8 @@
       tags: [never, activation]
 
 # Stow still creates every config link. Ansible only checkpoints/replaces whole
-# config roots and restores them on failure. Release copies keep Git pulls from
-# modifying the active configuration before the transaction has committed.
+# config roots and restores them on failure. Payload snapshots are backups only;
+# active links always point to configs/ in the working repository.
 - name: Deploy or restore a configuration transaction
   hosts: localhost
   connection: local
@@ -785,7 +785,7 @@
             state: absent
           when: tx_action == 'recover' and tx_record is defined and tx_record.status == 'committed'
 
-        - name: Prepare and activate a new configuration release
+        - name: Prepare a checkpoint and link the working repository
           when: tx_action == 'install'
           block:
             - name: Create a private checkpoint directory
@@ -795,7 +795,7 @@
                 prefix: transaction-
               register: tx_new
 
-            - name: Create staging and release directories
+            - name: Create staging and backup directories
               ansible.builtin.file:
                 path: '{{ tx_new.path }}/{{ item }}'
                 state: directory
@@ -806,39 +806,11 @@
               ansible.builtin.command:
                 argv: [stow, '--dir', '{{ tx_root }}', '--target', '{{ tx_new.path }}/stage', '--no-folding', '--ignore={{ tx_pattern }}', '--stow', configs]
 
-            - name: Freeze the selected payload so future Git pulls cannot change the active release
+            - name: Archive the selected payload for the checkpoint without using it as the Stow source
               ansible.builtin.command:
                 argv: [cp, '-RLp', '{{ tx_new.path }}/stage/.', '{{ tx_new.path }}/source/configs/']
 
-            - name: Detect the built-in display's notch for AeroSpace
-              ansible.builtin.command:
-                argv: [osascript, -l, JavaScript]
-                stdin: |
-                  ObjC.import('AppKit');
-                  ObjC.import('CoreGraphics');
-                  const screens = $.NSScreen.screens;
-                  let gap = 44;
-                  for (let i = 0; i < screens.count; i++) {
-                    const screen = screens.objectAtIndex(i);
-                    const id = screen.deviceDescription.objectForKey('NSScreenNumber').unsignedIntValue;
-                    if ($.CGDisplayIsBuiltin(id)) {
-                      gap = screen.safeAreaInsets.top > 0 ? 12 : 44;
-                    }
-                  }
-                  String(gap);
-              register: tx_aerospace_top_gap
-              changed_when: false
-              failed_when: tx_aerospace_top_gap.rc != 0 or tx_aerospace_top_gap.stdout | trim not in ['12', '44']
-              when: "'aerospace' in tx_configs"
-
-            - name: Reserve SketchyBar space in the frozen AeroSpace config
-              ansible.builtin.replace:
-                path: '{{ tx_new.path }}/source/configs/.config/aerospace/aerospace.toml'
-                regexp: "(?m)^outer\\.top = \\[\\{ monitor\\.'built-in' = 44 \\}, 42\\]$"
-                replace: "outer.top = [{ monitor.'built-in' = {{ tx_aerospace_top_gap.stdout | trim | int }} }, 42]"
-              when: "'aerospace' in tx_configs"
-
-            - name: Compare the candidate with the previous successful release
+            - name: Compare the candidate backup with the previous checkpoint
               ansible.builtin.command:
                 argv: [diff, '-qr', '{{ tx_latest }}/source/configs', '{{ tx_new.path }}/source/configs']
               register: tx_diff
@@ -846,9 +818,9 @@
               failed_when: tx_diff.rc not in [0, 1, 2]
               when: tx_latest | length > 0
 
-            - name: Inspect links of an unchanged release
+            - name: Inspect repository links even when the checkpoint contents are unchanged
               ansible.builtin.command:
-                argv: [stow, '--dir', '{{ tx_latest }}/source', '--target', '{{ tx_target }}', '--no-folding', '--simulate', '--verbose=1', '--stow', configs]
+                argv: '{{ tx_stow + ["--simulate", "--verbose=1", "--stow", "configs"] }}'
               register: tx_same_links
               failed_when: false
               changed_when: false
@@ -1006,7 +978,7 @@
 
             - name: Activate all selected configs with a single Stow invocation
               ansible.builtin.command:
-                argv: [stow, '--dir', '{{ tx_new.path }}/source', '--target', '{{ tx_target }}', '--no-folding', '--stow', configs]
+                argv: '{{ tx_stow + ["--stow", "configs"] }}'
               when: tx_change
 
             - name: Initialize plugins and generated configs before committing
