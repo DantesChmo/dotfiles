@@ -15,9 +15,9 @@ mach_port_t mach_get_bs_port(char* bs_name) {
   }
 
   mach_port_t port;
-  if (bootstrap_look_up(bs_port,
-                        bs_name,
-                        &port   ) != KERN_SUCCESS) {
+  kern_return_t result = bootstrap_look_up(bs_port, bs_name, &port);
+  mach_port_deallocate(task, bs_port);
+  if (result != KERN_SUCCESS) {
     return 0;
   }
 

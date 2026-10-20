@@ -9,12 +9,13 @@ sketchybarrc              # точка входа: бар, стили, items, з
 plugins/
   aerospace.sh            # индикатор воркспейсов AeroSpace (event-driven)
 helper/
-  provider.c             # метрики (clock/cpu/ram/battery/calendar) + чтение раскладки (--lang)
+  provider.c             # метрики (clock/cpu/ram/battery/calendar) + раскладка (--lang)
   mach.{c,h}             # mach-протокол из исходников SketchyBar
   Makefile               # сборка бинарника sketchybar_metrics
 ```
 
-Конфиг разложен по `~/.config/sketchybar` (симлинк на этот репозиторий).
+Конфиг разложен по `~/.config/sketchybar`. Штатная установка ссылается на
+зафиксированный снимок в `~/.local/state/dotfiles`, а не на рабочую копию Git.
 
 ## Метрики: единый провайдер, а не скрипты
 
@@ -113,9 +114,23 @@ sketchybar --add item language right \
 
 ## Плагин AeroSpace (`plugins/aerospace.sh`)
 
-Event-driven, не таймерный: реагирует на событие `aerospace_workspace_change`,
-которое шлёт AeroSpace (`~/.config/aerospace/aerospace.toml`). Показывает на
-активном воркспейсе раскладку (h_tiles/v_tiles/accordion) и маркер fullscreen.
+Event-driven, не таймерный: один скрытый item `aerospace_events` реагирует на
+`aerospace_workspace_change` от AeroSpace, `display_change` и `system_woke`.
+Скрипт `aerospace.sh render` одним вызовом SketchyBar обновляет labels всех
+воркспейсов: раскладку (h_tiles/v_tiles/accordion) и fullscreen на активном.
+Отдельные клики по трём зонам сохраняются.
+
+Hover отключён: у зон нет `script`, `mach_helper` и подписок на
+`mouse.entered`/`mouse.exited`. Движение мыши не запускает обработчики.
+Фон и иконки обновляются одной командой только по событию; анимаций нет.
+Кеш фокуса в `/tmp` и режим helper `--mouse` удалены.
+
+Проверка переключения, раскладок, fullscreen и очистки неактивных иконок:
+
+```sh
+python3 -m unittest discover -s tests -p test_sketchybar.py -v
+```
+
 Индикатор режима resize управляется прямо из биндингов AeroSpace
 (`--set aerospace_mode drawing=on/off`), т.к. у AeroSpace нет CLI для запроса
 текущего binding-mode.
@@ -123,6 +138,6 @@ Event-driven, не таймерный: реагирует на событие `a
 ## Применение изменений
 
 ```sh
-sketchybar --reload          # перечитать конфиг (перезапустит провайдер)
-cd helper && make            # если менялся provider.c
+make install-sketchybar      # собрать helper и активировать новый снимок
+sketchybar --reload          # перечитать снимок и перезапустить провайдер
 ```

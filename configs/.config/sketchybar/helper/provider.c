@@ -22,7 +22,6 @@
 #include <mach/vm_statistics.h>
 #include <ctype.h>
 #include <CoreFoundation/CoreFoundation.h>
-#include <CoreGraphics/CoreGraphics.h>
 #include <IOKit/ps/IOPowerSources.h>
 #include <IOKit/ps/IOPSKeys.h>
 #include <Carbon/Carbon.h>
@@ -52,6 +51,7 @@ static bool bar(int argc, char** argv) {
 
   char* rsp = mach_send_message(port, msg, len, true);
   free(msg);
+  mach_port_deallocate(mach_task_self(), port);
   if (rsp) free(rsp);
   return true;
 }
@@ -165,24 +165,9 @@ static int emit_keyboard(void) {
   return bar(3, c) ? 0 : 1;
 }
 
-// ---- Позиция курсора (one-shot режим `--mouse`) ----
-// Печатает "x y" в глобальных координатах (origin — левый верх главного
-// дисплея). Нужен ховеру воркспейсов: по mouse.exited проверяем, вышла ли
-// мышь за прямоугольник пилюли, или просто перешла в соседнюю зону.
-static int emit_mouse(void) {
-  CGEventRef e = CGEventCreate(NULL);
-  if (!e) return 1;
-  CGPoint p = CGEventGetLocation(e);
-  CFRelease(e);
-  printf("%d %d\n", (int)p.x, (int)p.y);
-  return 0;
-}
-
 int main(int argc, char** argv) {
   // one-shot: прочитать раскладку и выйти (вызывается по событию из sketchybar)
   if (argc > 1 && strcmp(argv[1], "--lang") == 0) return emit_keyboard();
-  // one-shot: позиция курсора для ховера воркспейсов
-  if (argc > 1 && strcmp(argv[1], "--mouse") == 0) return emit_mouse();
 
   setlocale(LC_TIME, "");   // для календаря: локализованные месяц/день
   cpu_usage();              // праймим счётчики тиков

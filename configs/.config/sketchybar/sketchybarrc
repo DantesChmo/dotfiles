@@ -37,23 +37,19 @@ sketchybar --add event aerospace_workspace_change
 # объединённые в bracket с общей «пилюлей». Ширины зон жёсткие, поэтому цифра
 # всегда ровно по центру, фулскрин строго слева, мод строго справа.
 # Подложка есть у всех ячеек; активная инвертируется: белая пилюля, чёрный текст
-# (цвета переключает plugins/aerospace.sh с анимацией).
+# (цвета и labels обновляет plugins/aerospace.sh по событию).
 for sid in $(aerospace list-workspaces --all); do
-  # Ховер ловим на зонах (не на bracket'е): мышь всегда над одной из них,
-  # а до подложки события доходят нестабильно. Подсвечивается вся пилюля.
+  # Только click_script: движение мыши не запускает обработчики.
   sketchybar --add item space.$sid.fs left \
-    --subscribe space.$sid.fs mouse.entered mouse.exited \
     --set space.$sid.fs \
       padding_left=4 padding_right=0 \
       icon.drawing=off \
       label.width=16 label.align=center \
       label.padding_left=0 label.padding_right=0 \
       label="" \
-      script="$PLUGIN_DIR/aerospace.sh $sid" \
       click_script="$PLUGIN_DIR/aerospace.sh $sid click:fs"
 
   sketchybar --add item space.$sid left \
-    --subscribe space.$sid aerospace_workspace_change mouse.entered mouse.exited \
     --set space.$sid \
       padding_left=0 padding_right=0 \
       icon.drawing=off \
@@ -61,18 +57,15 @@ for sid in $(aerospace list-workspaces --all); do
       label.padding_left=0 label.padding_right=0 \
       label.color=0x99ffffff \
       label="$sid" \
-      click_script="$PLUGIN_DIR/aerospace.sh $sid click:num" \
-      script="$PLUGIN_DIR/aerospace.sh $sid"
+      click_script="$PLUGIN_DIR/aerospace.sh $sid click:num"
 
   sketchybar --add item space.$sid.mode left \
-    --subscribe space.$sid.mode mouse.entered mouse.exited \
     --set space.$sid.mode \
       padding_left=0 padding_right=4 \
       icon.drawing=off \
       label.width=16 label.align=center \
       label.padding_left=0 label.padding_right=0 \
       label="" \
-      script="$PLUGIN_DIR/aerospace.sh $sid" \
       click_script="$PLUGIN_DIR/aerospace.sh $sid click:mode"
 
   sketchybar --add bracket ws.$sid space.$sid.fs space.$sid space.$sid.mode \
@@ -87,6 +80,12 @@ for sid in $(aerospace list-workspaces --all); do
     --set space.$sid.gap width=8 padding_left=0 padding_right=0 \
       icon.drawing=off label.drawing=off background.drawing=off
 done
+
+# Один shell-обработчик на событие, вместо отдельного для каждого воркспейса.
+# Фон и иконки обновляются одной командой; hover намеренно отключён.
+sketchybar --add item aerospace_events left \
+  --set aerospace_events drawing=off script="$PLUGIN_DIR/aerospace.sh render" \
+  --subscribe aerospace_events aerospace_workspace_change display_change system_woke
 
 # Индикатор активного режима AeroSpace (resize и т.п.)
 # Скрыт по умолчанию, загорается из биндингов aerospace при входе в режим.
