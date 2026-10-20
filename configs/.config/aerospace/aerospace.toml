@@ -131,11 +131,16 @@ alt-shift-c = 'close'
 alt-shift-r = 'reload-config'
 
 # Alt + Shift + Enter = открыть iTerm
+# При первом запуске iTerm сам создаёт окно; дополнительное нужно только если он уже запущен.
 alt-shift-enter = '''exec-and-forget osascript -e '
-tell application "iTerm"
-    create window with default profile
-    activate
-end tell'
+if application "iTerm" is running then
+    tell application "iTerm"
+        create window with default profile
+        activate
+    end tell
+else
+    tell application "iTerm" to activate
+end if'
 '''
 
 # ============================================
