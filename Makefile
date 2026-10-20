@@ -48,6 +48,7 @@ BECOME_FLAGS ?= $(if $(filter arch,$(PLATFORM)),--ask-become-pass)
 PLAYBOOK = ansible-playbook -i localhost, -c local "$(ROOT)/dependencies.yaml" $(if $(filter 1,$(DRY_RUN)),--check) $(ANSIBLE_FLAGS)
 POST_INSTALL_hammerspoon = defaults write org.hammerspoon.Hammerspoon MJConfigFile "$(TARGET)/.config/hammerspoon/init.lua"
 POST_INSTALL_aerospace-swipe = $(PLAYBOOK) --tags activation
+POST_INSTALL_iterm2 = defaults write com.googlecode.iterm2 PrefsCustomFolder -string "$(TARGET)/.config/iterm2" && defaults write com.googlecode.iterm2 LoadPrefsFromCustomFolder -bool true && defaults write com.googlecode.iterm2 NoSyncNeverRemindPrefsChangesLostForFile -bool true && defaults write com.googlecode.iterm2 NoSyncNeverRemindPrefsChangesLostForFile_selection -int 1
 TRANSACTION = $(PLAYBOOK) --tags transaction --extra-vars '{dotfiles_paths: [$(subst $(space),$(comma),$(strip $(call paths_for,$(SELECTED))))], dotfiles_configs: [$(subst $(space),$(comma),$(SELECTED))]}' --extra-vars "dotfiles_owner_pid=$$$$"
 companions_aerospace := iterm2 sketchybar
 companions_aerospace-swipe := aerospace iterm2 sketchybar
@@ -119,6 +120,7 @@ rollback recover: ansible
 	@$(TRANSACTION) --extra-vars dotfiles_action=$@
 link: stow
 	@$(call stow_for,$(ACTIVE),restow)
+sync: START=0
 sync: install
 unlink: stow
 	@$(call stow_for,$(ACTIVE),delete)
@@ -135,7 +137,7 @@ plan:
 	@$(call stow_for,$(SELECTED),restow) --verbose=1 || { \
 	  if [ '$(CONFLICTS)' = backup ]; then printf '%s\n' 'When activation is needed, install backs up selected config roots before replacing them.'; else exit 1; fi; }
 	@printf '\nInitialization after linking: %s\n' '$(strip $(foreach config,$(SELECTED),$(if $(POST_INSTALL_$(config)),$(config))))'
-	@$(if $(filter iterm2,$(SELECTED)),printf '%s\n' 'The transaction also publishes the Dotfiles profile at $(TARGET)/Library/Application Support/iTerm2/DynamicProfiles/dotfiles.json. Select Dotfiles as the default profile in iTerm2 Settings.',:)
+	@$(if $(filter iterm2,$(SELECTED)),printf '%s\n' 'iTerm2 will load the complete exported preferences from $(TARGET)/.config/iterm2 on its next launch. Quit iTerm2 with Cmd+Q and reopen it after installation.',:)
 
 # These configs use each other's programs and settings. Make orders them.
 deps-aerospace: deps-sketchybar
@@ -165,10 +167,10 @@ start-aerospace:
 	@$(RUN) open -a AeroSpace
 start-hammerspoon:
 	@$(call check_supported,hammerspoon)
-	@$(RUN) open -a Hammerspoon
+	@$(RUN) bash -ec 'pgrep -u "$$(id -u)" -x Hammerspoon >/dev/null || open -gj -a Hammerspoon'
 start-iterm2:
 	@$(call check_supported,iterm2)
-	@$(RUN) open -a iTerm
+	@$(RUN) bash -ec 'pgrep -u "$$(id -u)" -x iTerm2 >/dev/null || open -a iTerm'
 start-sketchybar:
 	@$(call check_supported,sketchybar)
 	@$(RUN) brew services start FelixKratz/formulae/sketchybar

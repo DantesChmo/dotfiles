@@ -142,66 +142,114 @@ class Transactions(unittest.TestCase):
         self.assertFalse((self.state / "latest").exists())
         self.assert_unlocked()
 
-    def test_iterm_profile_is_frozen_idempotent_and_restorable(self):
+    def setup_iterm(self):
         payload = self.repo / "configs/.config/iterm2"
         shutil.copytree(ROOT / "configs/.config/iterm2", payload)
-        profile = self.home / "Library/Application Support/iTerm2/DynamicProfiles/dotfiles.json"
-        profile.parent.mkdir(parents=True)
-        profile.write_text("original profile\n")
-        unrelated = profile.with_name("personal.json")
+        fakebin = self.base / "iterm-bin"
+        fakebin.mkdir()
+        defaults = fakebin / "defaults"
+        defaults.write_text("#!/usr/bin/env python3\n"
+                            "import os,sys,json,plistlib\nfrom pathlib import Path\n"
+                            "p=Path(os.environ['HOME'])/'iterm-preferences.json'\n"
+                            "d=json.loads(p.read_text()) if p.exists() else {}\n"
+                            "key=sys.argv[3]\n"
+                            "if sys.argv[1]=='export':\n"
+                            " sys.stdout.buffer.write(plistlib.dumps(d))\n"
+                            "elif sys.argv[1]=='import':\n"
+                            " p.write_text(json.dumps(plistlib.loads(Path(sys.argv[3]).read_bytes())))\n"
+                            "elif sys.argv[1]=='read':\n"
+                            " if key not in d: sys.exit(1)\n"
+                            " value=d[key]\n"
+                            " print(int(value) if isinstance(value,bool) else value)\n"
+                            "elif sys.argv[1]=='write':\n"
+                            " d[key]=(sys.argv[5] in ('true','1')) if sys.argv[4]=='-bool' else int(sys.argv[5]) if sys.argv[4]=='-int' else sys.argv[5]\n"
+                            " p.write_text(json.dumps(d))\n"
+                            "else:\n"
+                            " if key not in d: sys.exit(1)\n"
+                            " del d[key]\n"
+                            " p.write_text(json.dumps(d))\n")
+        defaults.chmod(0o755)
+        self.env.update(HOME=str(self.home), PATH=str(fakebin) + os.pathsep + self.env["PATH"])
+        return payload, {"dotfiles_paths": [".config/iterm2"], "dotfiles_configs": ["iterm2"]}
+
+    def test_iterm_complete_preferences_migration_idempotence_failure_and_rollback(self):
+        payload, extra = self.setup_iterm()
+        prefs = self.home / "iterm-preferences.json"
+        old_loader = {"PrefsCustomFolder": "old preferences with spaces", "LoadPrefsFromCustomFolder": False}
+        prefs.write_text(json.dumps(old_loader))
+        legacy = self.home / "Library/Application Support/iTerm2/DynamicProfiles/dotfiles.json"
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text("original dynamic profile\n")
+        unrelated = legacy.with_name("personal.json")
         unrelated.write_text('{"Profiles": []}\n')
-        extra = {"dotfiles_paths": [".config/iterm2"], "dotfiles_configs": ["iterm2"]}
         self.action("preflight", fail=True, extra=extra, env={"DOTFILES_CONFLICTS": "abort"})
-        self.assertEqual(profile.read_text(), "original profile\n")
+        self.assertEqual(legacy.read_text(), "original dynamic profile\n")
         self.assertFalse(self.state.exists())
         self.action("install", extra=extra)
         first = self.latest()
-        expected = json.loads((payload / "profile.json").read_text())
-        self.assertTrue(profile.is_symlink())
-        self.assertEqual(json.loads(profile.read_text()), expected)
-        self.assertEqual(expected["Profiles"][0]["Normal Font"], "HackNF-Regular 16")
-        self.assertFalse(expected["Profiles"][0]["Use Non-ASCII Font"])
-        self.assertEqual(expected["Profiles"][0]["Window Type"], 12)
-        self.assertAlmostEqual(expected["Profiles"][0]["Transparency"], 0.09654809397163121)
-        self.assertTrue(expected["Profiles"][0]["Blur"])
-        self.assertTrue(expected["Profiles"][0]["Use Separate Colors for Light and Dark Mode"])
-        for mode in ("Light", "Dark"):
-            for name in ["Background", "Foreground"] + [f"Ansi {i}" for i in range(16)]:
-                self.assertIn(f"{name} Color ({mode})", expected["Profiles"][0])
+        active = self.home / ".config/iterm2/com.googlecode.iterm2.plist"
+        source = payload / "com.googlecode.iterm2.plist"
+        self.assertTrue(active.is_symlink())
+        self.assertEqual(active.read_bytes(), source.read_bytes())
+        self.assertFalse(legacy.exists())
+        expected = plistlib.loads(source.read_bytes())
+        profile = next(p for p in expected["New Bookmarks"] if p["Guid"] == expected["Default Bookmark Guid"])
+        self.assertEqual(profile["Normal Font"], "HackNF-Regular 16")
+        self.assertEqual(profile["Window Type"], 12)
+        self.assertTrue(profile["Blur"])
+        self.assertIn("Gruvbox%20Material%20Dark", expected["Custom Color Presets"])
+        self.assertGreater(len(expected), 100)
+        self.assertEqual(json.loads(prefs.read_text()), {"PrefsCustomFolder": str(self.home / ".config/iterm2"), "LoadPrefsFromCustomFolder": True, "NoSyncNeverRemindPrefsChangesLostForFile": True, "NoSyncNeverRemindPrefsChangesLostForFile_selection": 1})
         self.action("install", extra=extra)
         self.assertEqual(self.latest(), first)
 
-        updated = json.loads(json.dumps(expected))
-        updated["Profiles"][0]["Normal Font"] = "HackNF-Regular 18"
-        (payload / "profile.json").write_text(json.dumps(updated))
-        self.assertEqual(json.loads(profile.read_text()), expected)
-        self.action("install", fail=True, extra=extra, env={"POST_INSTALL_iterm2": "false"})
+        updated = plistlib.loads(source.read_bytes())
+        updated["New Bookmarks"][0]["Normal Font"] = "HackNF-Regular 18"
+        source.write_bytes(plistlib.dumps(updated))
+        self.assertEqual(plistlib.loads(active.read_bytes()), expected)
+        # Change one loader key, then fail after that write: rescue must restore it.
+        fail_command = 'defaults write com.googlecode.iterm2 PrefsCustomFolder -string broken && false'
+        makefile = self.repo / "Makefile"
+        original_makefile = makefile.read_text()
+        makefile.write_text(original_makefile + "\noverride POST_INSTALL_iterm2 = " + fail_command + "\n")
+        self.action("install", fail=True, extra=extra)
+        makefile.write_text(original_makefile)
         self.assertEqual(self.latest(), first)
-        self.assertEqual(json.loads(profile.read_text()), expected)
+        self.assertEqual(json.loads(prefs.read_text())["PrefsCustomFolder"], str(self.home / ".config/iterm2"))
+        self.assertEqual(plistlib.loads(active.read_bytes()), expected)
         self.assert_unlocked()
 
         self.action("install", extra=extra)
-        self.assertEqual(json.loads(profile.read_text()), updated)
+        self.assertEqual(plistlib.loads(active.read_bytes()), updated)
         self.action("rollback", extra=extra)
-        self.assertEqual(json.loads(profile.read_text()), expected)
+        self.assertEqual(plistlib.loads(active.read_bytes()), expected)
         self.action("rollback", extra=extra)
-        self.assertEqual(profile.read_text(), "original profile\n")
+        self.assertEqual(legacy.read_text(), "original dynamic profile\n")
         self.assertEqual(unrelated.read_text(), '{"Profiles": []}\n')
+        self.assertEqual(json.loads(prefs.read_text()), old_loader)
         self.assertFalse((self.home / ".config/iterm2").exists())
         self.assert_unlocked()
 
-    def test_iterm_missing_link_is_repaired_and_arch_excludes_it(self):
-        shutil.copytree(ROOT / "configs/.config/iterm2", self.repo / "configs/.config/iterm2")
-        extra = {"dotfiles_paths": [".config/iterm2"], "dotfiles_configs": ["iterm2"]}
+    def test_iterm_loader_drift_missing_link_and_arch_exclusion(self):
+        payload, extra = self.setup_iterm()
         self.action("install", extra=extra)
-        profile = self.home / "Library/Application Support/iTerm2/DynamicProfiles/dotfiles.json"
-        profile.unlink()
+        first = self.latest()
+        active = self.home / ".config/iterm2/com.googlecode.iterm2.plist"
+        prefs = self.home / "iterm-preferences.json"
+        prefs.write_text(json.dumps({"PrefsCustomFolder": str(self.home / ".config/iterm2"), "LoadPrefsFromCustomFolder": False}))
         self.action("install", extra=extra)
-        self.assertTrue(profile.is_symlink())
+        self.assertNotEqual(self.latest(), first)
+        self.assertTrue(json.loads(prefs.read_text())["LoadPrefsFromCustomFolder"])
+        self.action("rollback", extra=extra)
+        self.assertFalse(json.loads(prefs.read_text())["LoadPrefsFromCustomFolder"])
+        active.unlink()
+        self.action("install", extra=extra)
+        self.assertTrue(active.is_symlink())
         self.command(["make", "install-iterm2", "DRY_RUN=1", "DOTFILES_PLATFORM=arch"], fail=True)
         self.assertNotIn("iterm2", self.command(["make", "list", "DRY_RUN=1", "DOTFILES_PLATFORM=arch"]))
         self.action("rollback", extra=extra)
         self.action("rollback", extra=extra)
+        self.assertEqual(json.loads(prefs.read_text()), {})
         self.assertFalse((self.home / "Library").exists())
         self.assert_unlocked()
 

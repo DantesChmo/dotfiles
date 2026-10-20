@@ -164,7 +164,7 @@ Stow размещает их в `~/.config/<package>/`.
 | `aerospace-swipe` | AeroSpace; сборка upstream-приложения `AerospaceSwipe.app`, создание LaunchAgent | Пропускается | `make start-aerospace-swipe`, разрешить Accessibility; отключить конфликтующие жесты macOS |
 | `btop` | `btop` | `btop` | Нет; тема поставляется вместе с btop |
 | `hammerspoon` | Hammerspoon, Zen Browser | Пропускается | `make start-hammerspoon`, разрешить Accessibility |
-| `iterm2` | iTerm2, Hack Nerd Font; профиль `Dotfiles`: окно без шапки, прозрачность/размытие, светлая/тёмная палитра | Пропускается | Один раз выбрать `Dotfiles` как профиль по умолчанию и открыть новое окно |
+| `iterm2` | iTerm2, Hack Nerd Font; полный экспорт всех настроек, профиля по умолчанию и Color Presets | Пропускается | Полностью перезапустить iTerm2 после установки |
 | `opencode` | `opencode` | `opencode`, `wl-clipboard`, `xclip` | Предоставить `ELIZA_TOKEN` и доступ к настроенным внутренним провайдерам |
 | `sketchybar` | SketchyBar, JankyBorders, AeroSpace, Hack Nerd Font; локальная сборка helper | Пропускается | `make start-sketchybar`; включить «Displays have separate Spaces» |
 
@@ -176,8 +176,9 @@ Xcode Command Line Tools: bootstrap проверяет доступность `c
 Установка не запускает UI-приложения или сервисы. `make start-*` делает это
 явно. Уже включённый в AeroSpace `start-at-login = true` сохраняется;
 JankyBorders запускается из его `after-startup-command`, поэтому отдельный
-сервис borders не нужен. Профиль iTerm2 `Dotfiles` выбирает Hack Nerd Font;
-после установки его нужно один раз сделать профилем по умолчанию в iTerm2.
+сервис borders не нужен. Полный конфиг iTerm2 содержит исходный профиль по умолчанию
+с Hack Nerd Font и Gruvbox Material Dark в Color Presets. После установки нужно
+полностью перезапустить iTerm2.
 В других терминалах шрифт выбирается вручную. SketchyBar выбирает Hack Nerd Font своим конфигом.
 
 ## Покрытие каждого файла

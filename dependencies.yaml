@@ -397,6 +397,7 @@
     tx_configs: '{{ dotfiles_configs | default([]) }}'
     tx_payload: '{{ dotfiles_paths | default([]) }}'
     tx_paths: '{{ tx_payload + (["Library/LaunchAgents/com.acsandmann.swipe.plist"] if "aerospace-swipe" in tx_configs else []) + ([tx_iterm_profile] if "iterm2" in tx_configs else []) }}'
+    # The old dynamic profile is backed up and removed during migration.
     tx_iterm_profile: Library/Application Support/iTerm2/DynamicProfiles/dotfiles.json
     tx_parents: >-
       {%- set ns = namespace(paths=[]) -%}
@@ -420,7 +421,7 @@
           - tx_state is abs
           - tx_action in ['rollback', 'recover'] or tx_payload | length > 0
           - not ansible_check_mode
-          - tx_configs | intersect(['nvim', 'hammerspoon', 'aerospace-swipe']) | length == 0 or (tx_target | realpath) == (lookup('ansible.builtin.env', 'HOME') | realpath)
+          - tx_configs | intersect(['nvim', 'hammerspoon', 'aerospace-swipe', 'iterm2']) | length == 0 or (tx_target | realpath) == (lookup('ansible.builtin.env', 'HOME') | realpath)
         fail_msg: 'Transactions require an absolute TARGET/STATE_DIR. Use make plan for a read-only preview.'
 
     - name: Validate managed relative paths
@@ -735,6 +736,11 @@
               failed_when: tx_preference_restore.rc != 0 and tx_record.hammerspoon.exists
               when: tx_record.hammerspoon is not none
 
+            - name: Restore all previous iTerm2 preferences
+              ansible.builtin.command:
+                argv: [defaults, import, com.googlecode.iterm2, '{{ tx_record.iterm2.preferences_file }}']
+              when: tx_record.iterm2 | default(none) is not none
+
             - name: Remove newly created parent directories only if empty
               ansible.builtin.command:
                 argv: [rmdir, '{{ tx_record.target }}/{{ item.path }}']
@@ -804,23 +810,6 @@
               ansible.builtin.command:
                 argv: [cp, '-RLp', '{{ tx_new.path }}/stage/.', '{{ tx_new.path }}/source/configs/']
 
-            # Keep the source under .config for Make's package discovery. Add
-            # iTerm2's native path to the release so Stow, drift checks and
-            # rollback manage just our file, preserving other dynamic profiles.
-            - name: Create the iTerm2 dynamic profile directory in the release
-              ansible.builtin.file:
-                path: '{{ tx_new.path }}/source/configs/{{ tx_iterm_profile | dirname }}'
-                state: directory
-                mode: '0755'
-              when: "'iterm2' in tx_configs"
-
-            - name: Publish the iTerm2 profile in the frozen release
-              ansible.builtin.copy:
-                src: '{{ tx_new.path }}/source/configs/.config/iterm2/profile.json'
-                dest: '{{ tx_new.path }}/source/configs/{{ tx_iterm_profile }}'
-                mode: '0644'
-              when: "'iterm2' in tx_configs"
-
             - name: Detect the built-in display's notch for AeroSpace
               ansible.builtin.command:
                 argv: [osascript, -l, JavaScript]
@@ -887,6 +876,32 @@
               failed_when: false
               when: "'hammerspoon' in tx_configs"
 
+            - name: Read the previous iTerm2 preference loader
+              ansible.builtin.command:
+                argv: [defaults, read, com.googlecode.iterm2, '{{ item.key }}']
+              loop:
+                - {key: PrefsCustomFolder, type: string}
+                - {key: LoadPrefsFromCustomFolder, type: bool}
+                - {key: NoSyncNeverRemindPrefsChangesLostForFile, type: bool}
+                - {key: NoSyncNeverRemindPrefsChangesLostForFile_selection, type: int}
+              register: tx_iterm_preferences
+              changed_when: false
+              failed_when: false
+              when: "'iterm2' in tx_configs"
+
+            - name: Determine whether iTerm2 loads the exported preferences
+              ansible.builtin.set_fact:
+                tx_iterm_drift: '{{ tx_iterm_preferences.results[0].rc != 0 or tx_iterm_preferences.results[0].stdout != tx_target + "/.config/iterm2" or tx_iterm_preferences.results[1].rc != 0 or tx_iterm_preferences.results[1].stdout != "1" or tx_iterm_preferences.results[2].rc != 0 or tx_iterm_preferences.results[2].stdout != "1" or tx_iterm_preferences.results[3].rc != 0 or tx_iterm_preferences.results[3].stdout != "1" }}'
+              when: "'iterm2' in tx_configs"
+
+            - name: Export all previous iTerm2 preferences for recovery
+              ansible.builtin.command:
+                argv: [defaults, export, com.googlecode.iterm2, '-']
+              register: tx_iterm_original
+              changed_when: false
+              no_log: true
+              when: "'iterm2' in tx_configs"
+
             - name: Inspect the generated Swipe LaunchAgent
               ansible.builtin.stat:
                 get_checksum: false
@@ -905,7 +920,7 @@
 
             - name: Decide whether a configuration activation is necessary
               ansible.builtin.set_fact:
-                tx_change: '{{ tx_latest | length == 0 or tx_diff.rc | default(1) != 0 or not tx_permissions_same | default(false) or tx_same_links.rc | default(1) != 0 or "LINK:" in tx_same_links.stderr | default("") or "MKDIR:" in tx_same_links.stderr | default("") or ("hammerspoon" in tx_configs and (tx_hammerspoon.rc != 0 or tx_hammerspoon.stdout != tx_target + "/.config/hammerspoon/init.lua")) or ("aerospace-swipe" in tx_configs and (not tx_swipe_agent.stat.exists or tx_swipe_drift.changed | default(false))) }}'
+                tx_change: '{{ tx_latest | length == 0 or tx_diff.rc | default(1) != 0 or not tx_permissions_same | default(false) or tx_same_links.rc | default(1) != 0 or "LINK:" in tx_same_links.stderr | default("") or "MKDIR:" in tx_same_links.stderr | default("") or tx_iterm_drift | default(false) or ("hammerspoon" in tx_configs and (tx_hammerspoon.rc != 0 or tx_hammerspoon.stdout != tx_target + "/.config/hammerspoon/init.lua")) or ("aerospace-swipe" in tx_configs and (not tx_swipe_agent.stat.exists or tx_swipe_drift.changed | default(false))) }}'
 
             - name: Inspect original managed roots
               ansible.builtin.stat:
@@ -928,6 +943,15 @@
                   entries: []
                   parents: []
                   hammerspoon: '{{ {"exists": tx_hammerspoon.rc | default(1) == 0, "value": tx_hammerspoon.stdout | default("")} if "hammerspoon" in tx_configs else none }}'
+                  iterm2: '{{ {"preferences_file": tx_new.path + "/iterm2-original-preferences.plist"} if "iterm2" in tx_configs else none }}'
+
+            - name: Save a private copy of all previous iTerm2 settings
+              ansible.builtin.copy:
+                dest: '{{ tx_record.iterm2.preferences_file }}'
+                content: '{{ tx_iterm_original.stdout }}'
+                mode: '0600'
+              no_log: true
+              when: "'iterm2' in tx_configs and tx_change"
 
             - name: Record original root existence, including dangling symlinks
               ansible.builtin.set_fact:
@@ -987,7 +1011,12 @@
 
             - name: Initialize plugins and generated configs before committing
               ansible.builtin.command:
-                argv: [make, '--no-print-directory', '-C', '{{ tx_root }}', initialize, 'SELECTED={{ (tx_configs if tx_change else tx_configs | difference(["hammerspoon", "aerospace-swipe"])) | join(" ") }}']
+                argv: [make, '--no-print-directory', '-C', '{{ tx_root }}', initialize, 'SELECTED={{ (tx_configs if tx_change else tx_configs | difference(["hammerspoon", "aerospace-swipe", "iterm2"])) | join(" ") }}']
+
+            - name: Explain when iTerm2 will load the exported settings
+              ansible.builtin.debug:
+                msg: 'Complete iTerm2 preferences installed, including the default profile and color presets. Quit iTerm2 with Cmd+Q and reopen it to load them; existing sessions keep their previous settings.'
+              when: "'iterm2' in tx_configs"
 
             - name: Commit the successful configuration checkpoint
               ansible.builtin.copy:
